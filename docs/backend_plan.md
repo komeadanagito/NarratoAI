@@ -32,13 +32,13 @@
 
 ## 2. API 实现边界
 
-| 路由 | Handler | 核心服务 | 同步/异步 |
-| --- | --- | --- | --- |
-| `GET /health` | `health.py` | 本地运行状态检查 | 同步 |
-| `POST /uploads/videos` | `uploads.py` | `UploadService` | 同步流式落盘 |
-| `POST /batches` | `batches.py` | `BatchProcessor` | 异步，返回 `202` |
-| `GET /batches/{batch_id}` | `batches.py` | `BatchStore` | 同步查询快照 |
-| `GET /artifacts/{artifact_id}/download` | `artifacts.py` | `ArtifactService` | 流式响应 |
+| 路由 | `operationId` | Handler | 核心服务 | 同步/异步 |
+| --- | --- | --- | --- | --- |
+| `GET /health` | `getHealth` | `health.py` | 本地运行状态检查 | 同步 |
+| `POST /uploads/videos` | `uploadVideos` | `uploads.py` | `UploadService` | 同步流式落盘 |
+| `POST /batches` | `createBatch` | `batches.py` | `BatchProcessor` | 异步，返回 `202` |
+| `GET /batches/{batch_id}` | `getBatch` | `batches.py` | `BatchStore` | 同步查询快照 |
+| `GET /artifacts/{artifact_id}/download` | `downloadArtifact` | `artifacts.py` | `ArtifactService` | 流式响应 |
 
 公共响应必须严格匹配 API：
 
@@ -115,6 +115,16 @@ API 只返回：
 
 ### 5.2 Batch
 
+`POST /batches` 的 `BatchCreateRequest` 顶层字段：
+
+| 字段 | 必填 | 后端处理 |
+| --- | --- | --- |
+| `upload_ids` | 是 | 去重并解析为已注册的上传文件，任一 ID 不存在则返回 `404` |
+| `output_directory` | 是 | 按第 6.2 节执行白名单和可写性校验 |
+| `concurrency` | 否 | 默认 1，API 范围 `1..16`，再受服务端实际上限约束 |
+| `narration` | 否 | 缺省等价于 `enabled=false` |
+| `deduplication` | 否 | 缺省时使用 OpenAPI 中各字段的默认值 |
+
 公共字段严格为：
 
 - `id`。
@@ -144,6 +154,8 @@ queued -> processing -> succeeded
 公共状态：`queued | processing | succeeded | failed`。
 
 公共阶段：`queued | analyzing | synthesizing | processing | completed`。
+
+每个 Job 必须返回 `id`、`upload_id`、`file_name`、`status`、`stage` 和 `progress`；`message`、`output_path`、`artifact_id`、`error` 根据执行状态选填。
 
 阶段转换：
 
@@ -186,13 +198,15 @@ Job 失败后设置 `error`，其结构严格为 `code + message`，不得继续
 ```text
 storage/
 ├── uploads/{upload_id}/source.{ext}
-├── tasks/{batch_id}/{job_id}/
+└── tasks/{batch_id}/{job_id}/
 │   ├── analysis.json
 │   ├── script.json
 │   ├── narration.mp3
 │   ├── subtitle.srt
 │   └── intermediate.mp4
-└── artifacts/{artifact_id}/output.mp4
+
+{allowed_output_root}/{output_directory}/
+└── {safe_source_name}_{short_id}.mp4
 ```
 
 上传规则：
@@ -217,7 +231,7 @@ API 要求前端传入 `output_directory`，但服务端不能接受任意文件
 
 ### 6.3 产物下载
 
-`ArtifactService` 保存 `artifact_id -> output_path` 映射。下载时必须重新验证目标是已注册的普通文件，不能把 URL 参数直接拼接成路径。
+`ArtifactService` 在内存中保存 `artifact_id -> output_path` 映射，文件本身只保留在已校验的导出目录。下载时必须重新验证目标是已注册的普通文件，不能把 URL 参数直接拼接成路径。
 
 响应优先使用 `video/mp4`；其他受支持产物使用 `application/octet-stream`。使用流式文件响应，避免大文件进入 Python 内存。
 
