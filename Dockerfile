@@ -63,12 +63,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 复制其余的应用代码
 COPY --chown=narratoai:narratoai . .
 
-# 创建核心服务需要的运行时目录
-RUN mkdir -p storage/temp storage/tasks storage/json storage/narration_scripts storage/drama_analysis && \
+# 创建后端和核心服务需要的运行时目录
+RUN mkdir -p storage/uploads storage/outputs storage/temp storage/tasks storage/json storage/narration_scripts storage/drama_analysis && \
     chown -R narratoai:narratoai /NarratoAI
 
 # 切换到非 root 用户
 USER narratoai
 
-# 默认只执行核心层自检；接入新的 API/前端后可覆盖该命令。
-CMD ["python", "-m", "app"]
+EXPOSE 8080
+
+# 容器内监听所有网卡；本地直接运行时仍默认只监听 127.0.0.1。
+CMD ["python", "-m", "app", "--host", "0.0.0.0", "--port", "8080"]

@@ -1268,8 +1268,57 @@ def doubaotts_tts(text: str, voice_name: str, voice_file: str, speed: float = 1.
     return None
 
 
+def seed_audio_tts(
+    text: str,
+    voice_name: str,
+    voice_file: str,
+    *,
+    speed: float = 1.0,
+    language: str = "",
+    voice_prompt: str = "",
+    provider=None,
+) -> Union[SubMaker, None]:
+    """Synthesize one segment with Volcengine Seed Audio V3."""
+    from app.services.tts import SeedAudioError, SeedAudioProvider
+
+    try:
+        result = (provider or SeedAudioProvider.from_config()).synthesize(
+            text,
+            voice_file,
+            voice_id=voice_name,
+            language=language,
+            voice_prompt=voice_prompt,
+            speed=speed,
+        )
+        duration_seconds = (
+            result.duration_ms / 1000.0
+            if result.duration_ms and result.duration_ms > 0
+            else get_audio_duration_from_file(voice_file)
+        )
+        sub_maker = new_sub_maker()
+        add_subtitle_event(
+            sub_maker,
+            0,
+            max(1, int(max(duration_seconds, 0.001) * 10_000_000)),
+            text,
+        )
+        return sub_maker
+    except SeedAudioError:
+        # Batch jobs must fail atomically; returning None here used to produce
+        # a seemingly successful video with missing narration segments.
+        raise
+
+
 def tts(
-    text: str, voice_name: str, voice_rate: float, voice_pitch: float, voice_file: str, tts_engine: str
+    text: str,
+    voice_name: str,
+    voice_rate: float,
+    voice_pitch: float,
+    voice_file: str,
+    tts_engine: str,
+    voice_language: str = "",
+    voice_prompt: str = "",
+    seed_audio_provider=None,
 ) -> Union[SubMaker, None]:
     tts_engine = config.normalize_tts_engine_name(tts_engine)
     voice_name = config.normalize_indextts_voice_prefix(voice_name)
@@ -1313,6 +1362,18 @@ def tts(
     if tts_engine == "doubaotts":
         logger.info("分发到豆包语音 TTS")
         return doubaotts_tts(text, voice_name, voice_file, speed=voice_rate)
+
+    if tts_engine == "seed_audio":
+        logger.info("分发到火山引擎 Seed Audio V3 TTS")
+        return seed_audio_tts(
+            text,
+            voice_name,
+            voice_file,
+            speed=voice_rate,
+            language=voice_language,
+            voice_prompt=voice_prompt,
+            provider=seed_audio_provider,
+        )
 
     # Fallback for unknown engine - default to azure v1
     logger.warning(f"未知的 TTS 引擎: '{tts_engine}', 将默认使用 Edge TTS (Azure V1)。")
@@ -1779,7 +1840,16 @@ def get_audio_duration(sub_maker: submaker.SubMaker):
     return sub_maker.offset[-1][1] / 10000000
 
 
-def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: float, voice_pitch: float, tts_engine: str = "azure"):
+def tts_multiple(
+    task_id: str,
+    list_script: list,
+    voice_name: str,
+    voice_rate: float,
+    voice_pitch: float,
+    tts_engine: str = "azure",
+    voice_language: str = "",
+    voice_prompt: str = "",
+):
     """
     根据JSON文件中的多段文本进行TTS转换
     
@@ -1794,6 +1864,11 @@ def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: f
     voice_name = config.normalize_indextts_voice_prefix(parse_voice_name(voice_name))
     output_dir = utils.task_dir(task_id)
     tts_results = []
+    seed_audio_provider = None
+    if tts_engine == "seed_audio":
+        from app.services.tts import SeedAudioProvider
+
+        seed_audio_provider = SeedAudioProvider.from_config()
     audio_extension = ".wav" if tts_engine in (
         config.INDEXTTS_ENGINE,
         config.INDEXTTS2_ENGINE,
@@ -1816,9 +1891,14 @@ def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: f
                 voice_pitch=voice_pitch,
                 voice_file=audio_file,
                 tts_engine=tts_engine,
+                voice_language=voice_language,
+                voice_prompt=voice_prompt,
+                seed_audio_provider=seed_audio_provider,
             )
 
             if sub_maker is None:
+                if tts_engine == "seed_audio":
+                    raise RuntimeError(f"Seed Audio 未能为时间戳 {timestamp} 生成音频")
                 logger.error(f"无法为时间戳 {timestamp} 生成音频; "
                              f"如果您在中国，请使用VPN; "
                              f"或者使用其他 tts 引擎")
@@ -1829,7 +1909,7 @@ def tts_multiple(task_id: str, list_script: list, voice_name: str, voice_rate: f
                     is_soulvoice_voice(voice_name)
                     or is_qwen_engine(tts_engine)
                     or tts_engine in (config.INDEXTTS_ENGINE, config.INDEXTTS2_ENGINE, config.OMNIVOICE_ENGINE)
-                    or tts_engine == "doubaotts"
+                    or tts_engine in ("doubaotts", "seed_audio")
                 ):
                     # 获取实际音频文件的时长
                     duration = get_audio_duration_from_file(audio_file)

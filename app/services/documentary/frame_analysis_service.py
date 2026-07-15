@@ -2,8 +2,10 @@ import asyncio
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from typing import Any, Callable
+from uuid import uuid4
 
 from loguru import logger
 
@@ -15,6 +17,9 @@ from app.utils import utils, video_processor
 
 
 class DocumentaryFrameAnalysisService:
+    _keyframe_locks_guard = threading.Lock()
+    _keyframe_locks: dict[str, threading.Lock] = {}
+
     PROMPT_TEMPLATE = """
 我提供了 {frame_count} 张视频帧，它们按时间顺序排列，代表一个连续的视频片段。
 首先，请详细描述每一帧的关键视觉信息（包含：主要内容、人物、动作和场景）。
@@ -287,24 +292,30 @@ JSON 必须包含以下键：
         cache_dir = os.path.join(keyframes_root, cache_key)
         os.makedirs(cache_dir, exist_ok=True)
 
-        cached_files = self._collect_keyframe_paths(cache_dir)
-        if cached_files:
-            logger.info(f"使用已缓存关键帧: {cache_dir}, 共 {len(cached_files)} 帧")
-            return cached_files
+        with self._get_keyframe_lock(cache_key):
+            cached_files = self._collect_keyframe_paths(cache_dir)
+            if cached_files:
+                logger.info(f"使用已缓存关键帧: {cache_dir}, 共 {len(cached_files)} 帧")
+                return cached_files
 
-        processor = video_processor.VideoProcessor(video_path)
-        extracted = processor.extract_frames_by_interval_with_fallback(
-            output_dir=cache_dir,
-            interval_seconds=frame_interval_seconds,
-        )
-        keyframe_files = sorted(str(path) for path in extracted if str(path).endswith(".jpg"))
-        if not keyframe_files:
-            keyframe_files = self._collect_keyframe_paths(cache_dir)
-        if not keyframe_files:
-            raise RuntimeError("未提取到任何关键帧")
+            processor = video_processor.VideoProcessor(video_path)
+            extracted = processor.extract_frames_by_interval_with_fallback(
+                output_dir=cache_dir,
+                interval_seconds=frame_interval_seconds,
+            )
+            keyframe_files = sorted(str(path) for path in extracted if str(path).endswith(".jpg"))
+            if not keyframe_files:
+                keyframe_files = self._collect_keyframe_paths(cache_dir)
+            if not keyframe_files:
+                raise RuntimeError("未提取到任何关键帧")
 
         logger.info(f"关键帧提取完成: {cache_dir}, 共 {len(keyframe_files)} 帧")
         return keyframe_files
+
+    @classmethod
+    def _get_keyframe_lock(cls, cache_key: str) -> threading.Lock:
+        with cls._keyframe_locks_guard:
+            return cls._keyframe_locks.setdefault(cache_key, threading.Lock())
 
     def _build_keyframe_cache_key(self, video_path: str, frame_interval_seconds: float) -> str:
         try:
@@ -512,16 +523,23 @@ JSON 必须包含以下键：
         analysis_dir = os.path.join(utils.storage_dir(), "temp", "analysis")
         os.makedirs(analysis_dir, exist_ok=True)
 
-        filename = f"frame_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = (
+            f"frame_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            f"_{uuid4().hex[:12]}.json"
+        )
         file_path = os.path.join(analysis_dir, filename)
-        suffix = 1
-        while os.path.exists(file_path):
-            filename = f"frame_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{suffix:02d}.json"
-            file_path = os.path.join(analysis_dir, filename)
-            suffix += 1
-
-        with open(file_path, "w", encoding="utf-8") as fp:
-            json.dump(artifact, fp, ensure_ascii=False, indent=2)
+        temporary_path = f"{file_path}.part"
+        try:
+            with open(temporary_path, "x", encoding="utf-8") as fp:
+                json.dump(artifact, fp, ensure_ascii=False, indent=2)
+                fp.flush()
+                os.fsync(fp.fileno())
+            os.replace(temporary_path, file_path)
+        finally:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
         logger.info(f"分析结果已保存到: {file_path}")
         return file_path
 

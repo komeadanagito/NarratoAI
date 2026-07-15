@@ -240,6 +240,17 @@
     pitch = 1.0
     silence_duration = 0.125
 
+[seed_audio]
+    # 火山引擎语音合成 V3（Seed TTS）。凭据只保存在服务端，不通过业务 API 传入。
+    api_url = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+    app_id = ""
+    access_token = ""
+    voice_type = ""
+    model = "seed-tts-1.1"
+    cluster = "volcano_tts"
+    timeout = 60
+    max_retries = 3
+
 [ui]
     # TTS引擎选择 (indextts, indextts2, omnivoice, edge_tts, qwen3_tts, tencent_tts, doubaotts, azure_speech)
     tts_engine = "indextts"
@@ -301,3 +312,18 @@
 
     # 视觉批处理最大并发批次数（OpenAI 兼容 provider）
     vision_max_concurrency = 2
+
+##########################################
+# 本地批量处理后端
+##########################################
+
+[backend]
+    host = "127.0.0.1"
+    port = 8080
+    upload_directory = "./storage/uploads"
+    allowed_output_roots = ["./storage/outputs"]
+    allowed_video_extensions = [".mp4", ".mov"]
+    max_upload_size_bytes = 2147483648
+    queue_capacity = 32
+    ffmpeg_threads = 2
+    ffmpeg_timeout_seconds = 3600

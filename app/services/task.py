@@ -319,7 +319,10 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
         params: 视频参数
         subclip_path_videos: 视频片段路径（可选，仅作为备用方案）
     """
-    global merged_audio_path, merged_subtitle_path
+    # These paths must be task-local: the batch API can execute multiple video
+    # jobs concurrently in the same process.
+    merged_audio_path = ""
+    merged_subtitle_path = ""
 
     logger.info(f"\n\n## 开始任务: {task_id}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=0)
@@ -367,6 +370,8 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
         voice_name=params.voice_name,
         voice_rate=params.voice_rate,
         voice_pitch=params.voice_pitch,
+        voice_language=params.video_language,
+        voice_prompt=getattr(params, "voice_prompt", ""),
     )
 
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=20)
@@ -400,7 +405,8 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
         video_origin_path=params.video_origin_path,
         video_origin_paths=getattr(params, "video_origin_paths", []),
         script_list=list_script,
-        tts_results=tts_results
+        tts_results=tts_results,
+        task_id=task_id,
     )
 
     # 更新 list_script 中的时间戳和路径信息
@@ -612,7 +618,10 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         task_id: 任务ID
         params: 视频参数
     """
-    global merged_audio_path, merged_subtitle_path
+    # These paths must be task-local: the batch API can execute multiple video
+    # jobs concurrently in the same process.
+    merged_audio_path = ""
+    merged_subtitle_path = ""
 
     logger.info(f"\n\n## 开始统一视频处理任务: {task_id}")
     _update_video_generation_task(
@@ -677,6 +686,8 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         voice_name=params.voice_name,
         voice_rate=params.voice_rate,
         voice_pitch=params.voice_pitch,
+        voice_language=params.video_language,
+        voice_prompt=getattr(params, "voice_prompt", ""),
     )
 
     _update_video_generation_task(
@@ -702,7 +713,8 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         video_origin_path=params.video_origin_path,
         video_origin_paths=getattr(params, "video_origin_paths", []),
         script_list=list_script,
-        tts_results=tts_results
+        tts_results=tts_results,
+        task_id=task_id,
     )
 
     # 更新 list_script 中的时间戳和路径信息

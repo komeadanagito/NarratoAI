@@ -239,9 +239,8 @@ components:
         concurrency:
           type: integer
           minimum: 1
-          maximum: 16
           default: 1
-          description: 同时处理的视频数量。
+          description: 同时处理的视频数量；接口不设置上限，请调用方按机器资源合理填写。
         narration:
           $ref: "#/components/schemas/NarrationOptions"
         deduplication:

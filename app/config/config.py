@@ -139,6 +139,8 @@ def save_config():
         _cfg["indextts2"] = indextts2
         _cfg["omnivoice"] = omnivoice
         _cfg["doubaotts"] = doubaotts
+        _cfg["seed_audio"] = seed_audio
+        _cfg["backend"] = backend
         f.write(tomli_w.dumps(_cfg))
 
 
@@ -157,6 +159,8 @@ indextts = _cfg.get("indextts", {})
 indextts2 = _cfg.get("indextts2", {})
 omnivoice = _cfg.get("omnivoice", {})
 doubaotts = _cfg.get("doubaotts", {})
+seed_audio = _cfg.get("seed_audio", {})
+backend = _cfg.get("backend", {})
 
 hostname = socket.gethostname()
 
