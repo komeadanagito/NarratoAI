@@ -13,6 +13,7 @@ from app.config import config
 from app.services.documentary.frame_analysis_models import FrameBatchResult
 from app.services.generate_narration_script import generate_narration, parse_frame_analysis_to_markdown
 from app.services.llm.migration_adapter import create_vision_analyzer
+from app.services.llm.manager import LLMServiceManager
 from app.utils import utils, video_processor
 
 
@@ -72,9 +73,9 @@ JSON 必须包含以下键：
 
         progress(80, "正在生成解说文案...")
         text_provider = config.app.get("text_llm_provider", "openai").lower()
-        text_api_key = config.app.get(f"text_{text_provider}_api_key")
-        text_model = config.app.get(f"text_{text_provider}_model_name")
-        text_base_url = config.app.get(f"text_{text_provider}_base_url")
+        text_api_key, text_model, text_base_url = LLMServiceManager.get_provider_config(
+            "text", text_provider
+        )
         if not text_api_key or not text_model:
             raise ValueError(
                 f"未配置 {text_provider} 的文本模型参数。"
@@ -124,11 +125,12 @@ JSON 必须包含以下键：
         concurrency = self._resolve_max_concurrency(max_concurrency)
         provider = (vision_llm_provider or config.app.get("vision_llm_provider", "openai")).lower()
 
-        api_key = vision_api_key if vision_api_key is not None else config.app.get(f"vision_{provider}_api_key")
-        model_name = (
-            vision_model_name if vision_model_name is not None else config.app.get(f"vision_{provider}_model_name")
+        configured_api_key, configured_model, configured_base_url = LLMServiceManager.get_provider_config(
+            "vision", provider
         )
-        base_url = vision_base_url if vision_base_url is not None else config.app.get(f"vision_{provider}_base_url", "")
+        api_key = vision_api_key if vision_api_key is not None else configured_api_key
+        model_name = vision_model_name if vision_model_name is not None else configured_model
+        base_url = vision_base_url if vision_base_url is not None else configured_base_url
         if not api_key or not model_name:
             raise ValueError(
                 f"未配置 {provider} 的 API Key 或模型名称。"

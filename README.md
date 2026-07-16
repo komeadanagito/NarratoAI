@@ -63,7 +63,9 @@ curl -L "$BASE/artifacts/$ARTIFACT_ID/download" -o result.mp4
 
 ## 后端与 AI 配置
 
-复制 `config.example.toml` 后，在本地 `config.toml` 中调整运行参数：
+运行参数放在本地 `config.toml`；模型、端点和活动模型放在
+`config/models.json`。默认已经选择 Ark 的
+`doubao-seed-2-1-turbo-260628`，并同时用于视觉和文本：
 
 ```toml
 [backend]
@@ -77,24 +79,21 @@ queue_capacity = 32
 ffmpeg_threads = 2
 ffmpeg_timeout_seconds = 3600
 
-[seed_audio]
-api_url = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
-app_id = ""
-access_token = ""
-voice_type = ""
-model = "seed-tts-1.1"
 ```
 
-生产凭据推荐通过环境变量提供：
+模型密钥只通过 `config/models.json` 指定的环境变量提供：
 
 ```bash
-export SEED_AUDIO_APP_ID=your_app_id
-export SEED_AUDIO_ACCESS_TOKEN=your_access_token
+export VOLCANO_ARK_API_KEY=your_ark_api_key
+export SEED_AUDIO_API_KEY=your_seed_audio_api_key
 ```
 
-Seed Audio V3 按官方 HTTP 协议使用 24 kHz；`voice_prompt` 中可识别的常见情绪会映射到音色的标准情绪参数，最终是否支持取决于所选音色。
+Seed Audio 使用 `/api/v3/tts/create`、`X-Api-Key`、
+`seed-audio-1.0` 和 48 kHz MP3。请在 `config/models.json` 的
+`speaker` 中填写默认 speaker，也可以由批处理请求的 `voice_id` 覆盖。
 
-开启 `narration.enabled=true` 还必须在 `[app]` 中配置可用的视觉和文本 OpenAI 兼容模型；火山 Ark 视觉接口可填写 `vision_openai_base_url`、`vision_openai_model_name` 和 `vision_openai_api_key`。API Key 只保存在服务端，不通过批处理接口传入，也不要提交 `config.toml`。
+新增或切换其他 LLM 时，在 `llm_profiles` 中增加 OpenAI-compatible
+profile，再修改 `active.vision` / `active.text`；业务代码无需修改。
 
 ## 测试
 

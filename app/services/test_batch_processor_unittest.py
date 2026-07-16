@@ -107,41 +107,32 @@ def test_batch_processor_rejects_missing_upload(tmp_path):
 
 def test_batch_processor_queue_is_bounded(tmp_path):
     output_root = tmp_path / "outputs"
-    source = tmp_path / "source.mp4"
-    source.write_bytes(b"video")
-    upload = FakeUpload(uuid4(), "source.mp4", source)
-    started = Event()
-    release = Event()
-
-    class BlockingTransform(CopyTransform):
-        def apply(self, *args, **kwargs):
-            started.set()
-            assert release.wait(2)
-            return super().apply(*args, **kwargs)
+    uploads = []
+    for index in range(2):
+        source = tmp_path / f"source-{index}.mp4"
+        source.write_bytes(b"video")
+        uploads.append(FakeUpload(uuid4(), source.name, source))
 
     store = BatchStore()
     processor = BatchProcessor(
-        upload_service=FakeUploads([upload]),
+        upload_service=FakeUploads(uploads),
         batch_store=store,
         artifact_service=ArtifactService([output_root]),
-        deduplication_service=BlockingTransform(),
+        deduplication_service=CopyTransform(),
         max_workers=1,
         queue_capacity=0,
     )
     try:
-        first = processor.create_batch(
-            BatchCreateRequest(upload_ids=[upload.id], output_directory=str(output_root))
-        )
-        assert started.wait(1)
         with pytest.raises(BatchProcessorError) as error:
             processor.create_batch(
-                BatchCreateRequest(upload_ids=[upload.id], output_directory=str(output_root))
+                BatchCreateRequest(
+                    upload_ids=[upload.id for upload in uploads],
+                    output_directory=str(output_root),
+                    concurrency=1,
+                )
             )
         assert error.value.status_code == 429
-        release.set()
-        assert wait_for_batch(store, first.id).status == BatchStatus.succeeded
     finally:
-        release.set()
         processor.shutdown()
 
 

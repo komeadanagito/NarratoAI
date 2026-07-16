@@ -1,10 +1,6 @@
 import os
-import json
 import subprocess
-import edge_tts
-from edge_tts import submaker
 from pydub import AudioSegment
-from typing import List, Dict
 from loguru import logger
 from app.utils import utils
 

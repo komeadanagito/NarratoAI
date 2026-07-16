@@ -4,6 +4,7 @@
 统一管理所有大模型服务提供商，提供简单的工厂方法来创建和获取服务实例
 """
 
+import os
 from typing import Dict, Type, Optional, Tuple
 from loguru import logger
 
@@ -77,7 +78,7 @@ class LLMServiceManager:
         return provider_name.lower()
 
     @classmethod
-    def _get_provider_config(
+    def get_provider_config(
         cls,
         model_type: str,
         provider_name: str
@@ -88,7 +89,10 @@ class LLMServiceManager:
         model_type: 'vision' 或 'text'
         """
         config_prefix = f"{model_type}_{provider_name}"
-        api_key = config.app.get(f"{config_prefix}_api_key")
+        api_key_env = str(config.app.get(f"{config_prefix}_api_key_env") or "").strip()
+        api_key = (os.getenv(api_key_env) if api_key_env else None) or config.app.get(
+            f"{config_prefix}_api_key"
+        )
         model_name = config.app.get(f"{config_prefix}_model_name")
         base_url = config.app.get(f"{config_prefix}_base_url")
 
@@ -126,7 +130,7 @@ class LLMServiceManager:
         
         # 获取配置
         config_prefix = f"vision_{provider_name}"
-        api_key, model_name, base_url = cls._get_provider_config("vision", provider_name)
+        api_key, model_name, base_url = cls.get_provider_config("vision", provider_name)
         
         if not api_key:
             raise ConfigurationError(f"缺少API密钥配置: {config_prefix}_api_key")
@@ -191,7 +195,7 @@ class LLMServiceManager:
         
         # 获取配置
         config_prefix = f"text_{provider_name}"
-        api_key, model_name, base_url = cls._get_provider_config("text", provider_name)
+        api_key, model_name, base_url = cls.get_provider_config("text", provider_name)
         
         if not api_key:
             raise ConfigurationError(f"缺少API密钥配置: {config_prefix}_api_key")

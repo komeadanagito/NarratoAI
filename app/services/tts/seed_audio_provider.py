@@ -4,7 +4,6 @@ import base64
 import json
 import os
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,13 +13,10 @@ import requests
 from app.config import config
 
 
-DEFAULT_SEED_AUDIO_URL = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
-RETRYABLE_CODES = {3003, 3005, 3030, 3031, 3032, 3040}
+DEFAULT_SEED_AUDIO_URL = "https://openspeech.bytedance.com/api/v3/tts/create"
 
 
 class SeedAudioError(RuntimeError):
-    """Raised when the Seed Audio provider cannot synthesize a request."""
-
     code = "UPSTREAM_FAILED"
     status_code = 502
 
@@ -38,64 +34,64 @@ class SeedAudioResult:
 
 
 class SeedAudioProvider:
-    """Volcengine V3 HTTP TTS adapter.
-
-    The adapter intentionally owns all provider-specific payload details so the
-    rest of the video pipeline only deals with a local audio file.
-    """
+    """Adapter for Seed Audio ``POST /api/v3/tts/create``."""
 
     def __init__(
         self,
         *,
-        app_id: str,
-        access_token: str,
+        api_key: str,
         api_url: str = DEFAULT_SEED_AUDIO_URL,
-        voice_type: str = "",
-        model: str = "seed-tts-1.1",
-        cluster: str = "volcano_tts",
-        timeout: float = 60.0,
+        speaker: str = "",
+        references: list[dict[str, Any]] | None = None,
+        model: str = "seed-audio-1.0",
+        audio_config: dict[str, Any] | None = None,
+        watermark: dict[str, Any] | None = None,
+        timeout: float = 300.0,
         max_retries: int = 3,
         session: Any | None = None,
     ) -> None:
-        self.app_id = str(app_id or "").strip()
-        self.access_token = str(access_token or "").strip()
+        self.api_key = str(api_key or "").strip()
         self.api_url = str(api_url or DEFAULT_SEED_AUDIO_URL).strip()
-        self.voice_type = str(voice_type or "").strip()
-        self.model = str(model or "").strip()
-        self.cluster = str(cluster or "volcano_tts").strip()
+        self.model = str(model or "seed-audio-1.0").strip()
+        self.references = [dict(item) for item in (references or []) if isinstance(item, dict)]
+        configured_speaker = str(speaker or "").strip()
+        if not configured_speaker and self.references:
+            configured_speaker = str(self.references[0].get("speaker") or "").strip()
+        self.speaker = configured_speaker
+        self.audio_config = {
+            "format": "mp3",
+            "sample_rate": 48000,
+            "pitch_rate": 0,
+            "speech_rate": 0,
+            "loudness_rate": 0,
+            **(audio_config or {}),
+        }
+        self.watermark = dict(watermark or {})
         self.timeout = max(1.0, float(timeout))
         self.max_retries = max(1, int(max_retries))
         self.session = session or requests.Session()
 
     @classmethod
     def from_config(cls, *, session: Any | None = None) -> "SeedAudioProvider":
-        provider_cfg = getattr(config, "seed_audio", {}) or {}
-        legacy_cfg = getattr(config, "doubaotts", {}) or {}
-
-        app_id = os.getenv("SEED_AUDIO_APP_ID") or provider_cfg.get("app_id") or provider_cfg.get("appid")
-        access_token = (
-            os.getenv("SEED_AUDIO_ACCESS_TOKEN")
-            or provider_cfg.get("access_token")
-            or legacy_cfg.get("token")
-        )
+        values = getattr(config, "seed_audio", {}) or {}
+        api_key_env = str(values.get("api_key_env") or "SEED_AUDIO_API_KEY").strip()
+        api_key = (os.getenv(api_key_env) if api_key_env else None) or values.get("api_key", "")
         return cls(
-            app_id=app_id or legacy_cfg.get("appid", ""),
-            access_token=access_token or "",
-            api_url=os.getenv("SEED_AUDIO_API_URL")
-            or provider_cfg.get("api_url", DEFAULT_SEED_AUDIO_URL),
-            voice_type=os.getenv("SEED_AUDIO_VOICE_TYPE")
-            or provider_cfg.get("voice_type", ""),
-            model=os.getenv("SEED_AUDIO_MODEL")
-            or provider_cfg.get("model", "seed-tts-1.1"),
-            cluster=provider_cfg.get("cluster", "volcano_tts"),
-            timeout=provider_cfg.get("timeout", 60),
-            max_retries=provider_cfg.get("max_retries", 3),
+            api_key=api_key or "",
+            api_url=os.getenv("SEED_AUDIO_API_URL") or values.get("api_url", DEFAULT_SEED_AUDIO_URL),
+            speaker=os.getenv("SEED_AUDIO_SPEAKER") or values.get("speaker", ""),
+            references=values.get("references") or [],
+            model=os.getenv("SEED_AUDIO_MODEL") or values.get("model", "seed-audio-1.0"),
+            audio_config=values.get("audio_config") or {},
+            watermark=values.get("watermark") or {},
+            timeout=values.get("timeout", 300),
+            max_retries=values.get("max_retries", 3),
             session=session,
         )
 
     @property
     def configured(self) -> bool:
-        return bool(self.app_id and self.access_token and self.voice_type)
+        return bool(self.api_key and self.speaker)
 
     def synthesize(
         self,
@@ -109,67 +105,40 @@ class SeedAudioProvider:
     ) -> SeedAudioResult:
         clean_text = str(text or "").strip()
         if not clean_text:
-            raise SeedAudioError("Seed Audio 合成文本不能为空", provider_code=3011)
-        if len(clean_text.encode("utf-8")) > 1024:
-            raise SeedAudioError("Seed Audio 单次合成文本不能超过 1024 UTF-8 字节", provider_code=3010)
-        if not self.app_id or not self.access_token:
-            error = SeedAudioError("Seed Audio 未配置 app_id 或 access_token")
+            raise SeedAudioError("Seed Audio 合成文本不能为空")
+        if not self.api_key:
+            error = SeedAudioError("Seed Audio 未配置 API Key")
             error.code = "PROVIDER_NOT_CONFIGURED"
             error.status_code = 400
             raise error
 
-        selected_voice = str(voice_id or self.voice_type).strip()
-        if not selected_voice:
-            error = SeedAudioError("Seed Audio 未配置 voice_type")
+        references = self._build_references(voice_id)
+        if not references:
+            error = SeedAudioError("Seed Audio 未配置 speaker")
             error.code = "PROVIDER_NOT_CONFIGURED"
             error.status_code = 400
             raise error
 
-        request_id = str(uuid.uuid4())
-        audio: dict[str, Any] = {
-            "voice_type": selected_voice,
-            "encoding": "mp3",
-            # The official big-model V3 endpoint defaults to 24 kHz and only
-            # documents 8/16 kHz as alternate values; 48 kHz is not accepted.
-            "rate": 24000,
-            "speed_ratio": max(0.1, min(2.0, float(speed))),
-        }
-        emotion = self._normalize_emotion(voice_prompt)
-        if emotion:
-            audio["enable_emotion"] = True
-            audio["emotion"] = emotion
-        explicit_language = self._normalize_language(language)
-        if explicit_language:
-            audio["explicit_language"] = explicit_language
+        prompt_parts = []
+        if str(language or "").strip():
+            prompt_parts.append(f"使用 {str(language).strip()} 朗读。")
+        if str(voice_prompt or "").strip():
+            prompt_parts.append(str(voice_prompt).strip())
+        prompt_parts.append(clean_text)
 
-        request_payload: dict[str, Any] = {
-            "reqid": request_id,
-            "text": clean_text,
-            "operation": "query",
-            "with_timestamp": 1,
-        }
-        if self.model:
-            request_payload["model"] = self.model
+        audio_config = dict(self.audio_config)
+        audio_config["speech_rate"] = self._speed_to_rate(speed)
         payload = {
-            "app": {
-                "appid": self.app_id,
-                "token": "token",
-                "cluster": self.cluster,
-            },
-            "user": {"uid": "NarratoAI"},
-            "audio": audio,
-            "request": request_payload,
+            "model": self.model,
+            "text_prompt": "\n".join(prompt_parts),
+            "references": references,
+            "audio_config": audio_config,
+            "watermark": dict(self.watermark),
         }
-        headers = {
-            "Authorization": f"Bearer;{self.access_token}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json", "X-Api-Key": self.api_key}
 
         last_error: SeedAudioError | None = None
         for attempt in range(self.max_retries):
-            if attempt:
-                request_id = str(uuid.uuid4())
-                request_payload["reqid"] = request_id
             try:
                 response = self.session.post(
                     self.api_url,
@@ -177,48 +146,28 @@ class SeedAudioProvider:
                     headers=headers,
                     timeout=self.timeout,
                 )
-                result, direct_audio = self._decode_response(response)
-                if direct_audio is not None:
-                    return self._write_result(output_path, direct_audio, request_id=request_id)
-
-                provider_code = self._to_int(result.get("code"))
-                if provider_code is None:
-                    raise SeedAudioError("Seed Audio 返回了无效的状态码")
-                if response.status_code >= 400 or provider_code not in {0, 3000, 20000000}:
+                if response.status_code >= 400:
                     last_error = SeedAudioError(
-                        f"Seed Audio 上游请求失败 (code={provider_code})",
-                        provider_code=provider_code,
+                        f"Seed Audio 上游请求失败 (HTTP {response.status_code})",
+                        provider_code=response.status_code,
                     )
-                    retryable = response.status_code in {429, 500, 502, 503, 504} or provider_code in RETRYABLE_CODES
-                    if retryable and attempt + 1 < self.max_retries:
+                    if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < self.max_retries:
                         time.sleep(min(2**attempt, 4))
                         continue
                     raise last_error
 
-                encoded_audio = result.get("data")
-                if not isinstance(encoded_audio, str) or not encoded_audio:
-                    raise SeedAudioError("Seed Audio 响应缺少音频数据", provider_code=provider_code)
-                try:
-                    audio_bytes = base64.b64decode(encoded_audio, validate=True)
-                except Exception as exc:
-                    raise SeedAudioError("Seed Audio 返回了无效的 Base64 音频") from exc
-
-                addition = result.get("addition") or {}
-                if isinstance(addition, str):
-                    try:
-                        addition = json.loads(addition)
-                    except json.JSONDecodeError:
-                        addition = {}
-                if not isinstance(addition, dict):
-                    addition = {}
-                duration_ms = self._to_int(addition.get("duration"))
-                timestamps = addition.get("timestamps") or addition.get("timestamp")
-                return self._write_result(
-                    output_path,
-                    audio_bytes,
-                    duration_ms=duration_ms,
-                    timestamps=timestamps if isinstance(timestamps, list) else None,
-                    request_id=request_id,
+                audio_bytes, metadata = self._extract_audio(response)
+                output = Path(output_path)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(audio_bytes)
+                return SeedAudioResult(
+                    output_path=str(output),
+                    duration_ms=self._duration_ms(metadata),
+                    timestamps=self._find_list(metadata, ("timestamps", "timestamp")),
+                    request_id=str(
+                        self._find_value(metadata, ("request_id", "requestId", "id"))
+                        or response.headers.get("x-request-id", "")
+                    ),
                 )
             except requests.RequestException as exc:
                 last_error = SeedAudioError(f"Seed Audio 网络请求失败: {exc.__class__.__name__}")
@@ -229,118 +178,102 @@ class SeedAudioProvider:
 
         raise last_error or SeedAudioError("Seed Audio 合成失败")
 
-    @staticmethod
-    def _normalize_language(language: str) -> str:
-        normalized = str(language or "").strip().lower()
-        aliases = {
-            "zh": "zh-cn",
-            "zh-cn": "zh-cn",
-            "zh-tw": "zh-cn",
-            "en": "en",
-            "en-us": "en",
-            "ja": "ja",
-            "ja-jp": "ja",
-        }
-        return aliases.get(normalized, normalized)
+    def _build_references(self, voice_id: str) -> list[dict[str, Any]]:
+        selected = str(voice_id or self.speaker or "").strip()
+        if selected:
+            return [{"speaker": selected}]
+        return [dict(item) for item in self.references]
 
     @staticmethod
-    def _normalize_emotion(voice_prompt: str) -> str:
-        """Map free-form UI hints to documented V3 emotion values.
+    def _speed_to_rate(speed: float) -> int:
+        return max(-50, min(100, round((float(speed) - 1.0) * 100)))
 
-        Unsupported prose is deliberately ignored instead of being sent as an
-        undocumented ``extra_param`` that would make otherwise valid requests
-        fail. Whether an emotion works still depends on the selected voice.
-        """
-
-        value = str(voice_prompt or "").strip().lower()
-        aliases = (
-            (("angry", "生气", "愤怒"), "angry"),
-            (("sad", "悲伤", "伤感"), "sad"),
-            (("fear", "恐惧", "害怕"), "fear"),
-            (("happy", "开心", "高兴", "欢快"), "happy"),
-            (("disgust", "厌恶", "嫌弃"), "disgust"),
-            (("surprise", "惊讶", "惊喜"), "surprised"),
-            (("neutral", "中性", "平静", "克制"), "neutral"),
-        )
-        for keywords, emotion in aliases:
-            if any(keyword in value for keyword in keywords):
-                return emotion
-        return ""
-
-    @staticmethod
-    def _decode_response(response: Any) -> tuple[dict[str, Any], bytes | None]:
+    def _extract_audio(self, response: Any) -> tuple[bytes, dict[str, Any]]:
         content_type = str(response.headers.get("content-type", "")).lower()
         raw = bytes(response.content or b"")
         if content_type.startswith("audio/") or content_type == "application/octet-stream":
-            if response.status_code >= 400:
-                return {"code": response.status_code, "message": "audio request failed"}, None
-            return {}, raw
+            if not raw:
+                raise SeedAudioError("Seed Audio 返回了空音频")
+            return raw, {}
 
         try:
             payload = response.json()
-            if isinstance(payload, dict):
-                return payload, None
-            return {
-                "code": response.status_code,
-                "message": "Seed Audio 返回了无效的 JSON 结构",
-            }, None
-        except Exception:
-            pass
+        except (ValueError, TypeError) as exc:
+            raise SeedAudioError("Seed Audio 返回了无效 JSON") from exc
+        if not isinstance(payload, dict):
+            raise SeedAudioError("Seed Audio 返回格式错误")
 
-        # Some chunked deployments return one JSON object per line. Keep the
-        # last terminal object and concatenate any audio chunks.
-        chunks: list[bytes] = []
-        terminal: dict[str, Any] = {}
-        for line in raw.splitlines():
+        encoded = self._find_value(payload, ("audio_data", "audio_base64", "audio"))
+        if isinstance(encoded, str):
+            if encoded.startswith("data:") and "," in encoded:
+                encoded = encoded.split(",", 1)[1]
             try:
-                event = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(event, dict):
-                continue
-            terminal = event
-            data = event.get("data")
-            if isinstance(data, str) and data:
-                try:
-                    chunks.append(base64.b64decode(data))
-                except Exception:
-                    continue
-        if chunks:
-            terminal = dict(terminal)
-            terminal["code"] = terminal.get("code", 3000)
-            terminal["data"] = base64.b64encode(b"".join(chunks)).decode("ascii")
-            return terminal, None
-        return {
-            "code": response.status_code,
-            "message": "Seed Audio 返回了无法解析的响应",
-        }, None
+                data = base64.b64decode(encoded, validate=True)
+                if data:
+                    return data, payload
+            except (ValueError, TypeError):
+                pass
 
-    @staticmethod
-    def _write_result(
-        output_path: str | os.PathLike[str],
-        audio_bytes: bytes,
-        *,
-        duration_ms: int | None = None,
-        timestamps: list[dict[str, Any]] | None = None,
-        request_id: str,
-    ) -> SeedAudioResult:
-        if not audio_bytes:
-            raise SeedAudioError("Seed Audio 返回了空音频")
-        destination = Path(output_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_suffix(destination.suffix + ".part")
-        temporary.write_bytes(audio_bytes)
-        os.replace(temporary, destination)
-        return SeedAudioResult(
-            output_path=str(destination),
-            duration_ms=duration_ms,
-            timestamps=timestamps,
-            request_id=request_id,
-        )
+        url = self._find_value(payload, ("audio_url", "download_url", "output_url", "url"))
+        if isinstance(url, str) and url.startswith(("https://", "http://")):
+            getter = getattr(self.session, "get", requests.get)
+            downloaded = getter(url, timeout=self.timeout)
+            downloaded.raise_for_status()
+            data = bytes(downloaded.content or b"")
+            if data:
+                return data, payload
 
-    @staticmethod
-    def _to_int(value: Any) -> int | None:
+        # Some compatible responses use a generic ``data`` field for Base64.
+        generic_data = self._find_value(payload, ("data",))
+        if isinstance(generic_data, str):
+            try:
+                data = base64.b64decode(generic_data, validate=True)
+                if data:
+                    return data, payload
+            except (ValueError, TypeError):
+                pass
+        raise SeedAudioError("Seed Audio 响应中没有可用的音频数据或下载地址")
+
+    @classmethod
+    def _find_value(cls, value: Any, keys: tuple[str, ...]) -> Any:
+        if isinstance(value, dict):
+            for key in keys:
+                if key in value and value[key] not in (None, ""):
+                    return value[key]
+            for child in value.values():
+                found = cls._find_value(child, keys)
+                if found not in (None, ""):
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = cls._find_value(child, keys)
+                if found not in (None, ""):
+                    return found
+        return None
+
+    @classmethod
+    def _find_int(cls, payload: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+        value = cls._find_value(payload, keys)
         try:
-            return int(float(value))
+            return int(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    @classmethod
+    def _duration_ms(cls, payload: dict[str, Any]) -> int | None:
+        milliseconds = cls._find_int(payload, ("duration_ms",))
+        if milliseconds is not None:
+            return milliseconds
+        seconds = cls._find_value(payload, ("original_duration", "audio_duration_seconds", "duration"))
+        try:
+            return round(float(seconds) * 1000) if seconds is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _find_list(cls, payload: dict[str, Any], keys: tuple[str, ...]) -> list[dict[str, Any]] | None:
+        value = cls._find_value(payload, keys)
+        return value if isinstance(value, list) else None
+
+
+__all__ = ["DEFAULT_SEED_AUDIO_URL", "SeedAudioError", "SeedAudioProvider", "SeedAudioResult"]

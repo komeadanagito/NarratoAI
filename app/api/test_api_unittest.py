@@ -68,6 +68,25 @@ class _ArtifactService:
             },
         )()
 
+    def open_artifact(self, artifact_id):
+        artifact = self.get_artifact(artifact_id)
+        if artifact is None:
+            return None
+
+        class Opened:
+            record = artifact
+
+            def __init__(self, path):
+                self.stream = Path(path).open("rb")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.stream.close()
+
+        return Opened(self.path)
+
 
 class BatchApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -12,7 +12,6 @@ from loguru import logger
 from .manager import LLMServiceManager
 from .validators import OutputValidator
 from .exceptions import LLMServiceError
-from app.services.prompts import PromptManager
 
 # 提供商由 LLMServiceManager 在首次使用时延迟注册。
 # 这样更可靠，错误也更容易调试
@@ -189,62 +188,6 @@ class UnifiedLLMService:
         except Exception as e:
             logger.error(f"解说文案生成失败: {str(e)}")
             raise LLMServiceError(f"解说文案生成失败: {str(e)}")
-    
-    @staticmethod
-    async def analyze_subtitle(subtitle_content: str,
-                             provider: Optional[str] = None,
-                             temperature: float = 1.0,
-                             prompt_category: str = "short_drama_narration",
-                             validate_output: bool = True,
-                             **kwargs) -> str:
-        """
-        分析字幕内容
-        
-        Args:
-            subtitle_content: 字幕内容
-            provider: 文本模型提供商名称
-            temperature: 生成温度
-            validate_output: 是否验证输出格式
-            **kwargs: 其他参数
-            
-        Returns:
-            分析结果
-            
-        Raises:
-            LLMServiceError: 服务调用失败时抛出
-        """
-        try:
-            prompt = PromptManager.get_prompt(
-                category=prompt_category,
-                name="plot_analysis",
-                parameters={"subtitle_content": subtitle_content},
-            )
-            prompt_object = PromptManager.get_prompt_object(
-                category=prompt_category,
-                name="plot_analysis",
-            )
-            system_prompt = prompt_object.get_system_prompt()
-            
-            # 生成分析结果
-            result = await UnifiedLLMService.generate_text(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                provider=provider,
-                temperature=temperature,
-                **kwargs
-            )
-            
-            # 验证输出格式
-            if validate_output:
-                validated_result = OutputValidator.validate_subtitle_analysis(result)
-                logger.info("字幕分析完成并验证通过")
-                return validated_result
-            else:
-                return result
-                
-        except Exception as e:
-            logger.error(f"字幕分析失败: {str(e)}")
-            raise LLMServiceError(f"字幕分析失败: {str(e)}")
     
     @staticmethod
     def get_provider_info() -> Dict[str, Any]:

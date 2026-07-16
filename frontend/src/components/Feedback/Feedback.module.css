@@ -1,0 +1,35 @@
+.feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  color: #991b1b;
+  background: #fef2f2;
+  font-size: 11px;
+}
+
+.feedback p {
+  margin: 1px 0 3px;
+}
+
+.icon {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  background: var(--danger);
+  font-weight: 700;
+}
+
+.feedback button {
+  margin: -4px -2px 0 auto;
+  border: 0;
+  color: #991b1b;
+  background: transparent;
+  font-size: 20px;
+}

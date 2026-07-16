@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.siliconflow.cn/v1"
+DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_OPENAI_COMPATIBLE_PROVIDER = "openai"
 
 DEFAULT_VISION_LLM_PROVIDER = DEFAULT_OPENAI_COMPATIBLE_PROVIDER
-DEFAULT_VISION_OPENAI_MODEL_NAME = "Qwen/Qwen3.5-122B-A10B"
+DEFAULT_VISION_OPENAI_MODEL_NAME = "doubao-seed-2-1-turbo-260628"
 
 DEFAULT_TEXT_LLM_PROVIDER = DEFAULT_OPENAI_COMPATIBLE_PROVIDER
-DEFAULT_TEXT_OPENAI_MODEL_NAME = "Pro/zai-org/GLM-5"
+DEFAULT_TEXT_OPENAI_MODEL_NAME = "doubao-seed-2-1-turbo-260628"
 
 DEFAULT_LLM_GENERATION_CONFIG = {
     "temperature": 1.0,
@@ -35,9 +35,6 @@ DEFAULT_LLM_APP_CONFIG = {
     "text_openai_model_name": DEFAULT_TEXT_OPENAI_MODEL_NAME,
     "text_openai_api_key": "",
     "text_openai_base_url": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
-    "tavily_api_key": "",
-    "tavily_search_depth": "basic",
-    "tavily_max_results": 5,
 }
 DEFAULT_LLM_APP_CONFIG.update(DEFAULT_LLM_GENERATION_APP_CONFIG)
 

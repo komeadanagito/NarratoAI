@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "active": {
+    "vision": "volcengine_ark_doubao",
+    "text": "volcengine_ark_doubao",
+    "tts": "volcengine_seed_audio"
+  },
+  "llm_profiles": {
+    "volcengine_ark_doubao": {
+      "provider": "openai",
+      "api_key_env": "VOLCANO_ARK_API_KEY",
+      "api_key": "",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "models": {
+        "vision": "doubao-seed-2-1-turbo-260628",
+        "text": "doubao-seed-2-1-turbo-260628"
+      },
+      "generation": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "max_tokens": 65536,
+        "thinking_level": "auto"
+      }
+    }
+  },
+  "tts_profiles": {
+    "volcengine_seed_audio": {
+      "provider": "seed_audio",
+      "api_key_env": "SEED_AUDIO_API_KEY",
+      "api_key": "",
+      "api_url": "https://openspeech.bytedance.com/api/v3/tts/create",
+      "model": "seed-audio-1.0",
+      "speaker": "",
+      "references": [],
+      "audio_config": {
+        "format": "mp3",
+        "sample_rate": 48000,
+        "pitch_rate": 0,
+        "speech_rate": 0,
+        "loudness_rate": 0
+      },
+      "watermark": {},
+      "timeout": 300,
+      "max_retries": 3
+    }
+  }
+}

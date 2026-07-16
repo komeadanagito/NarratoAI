@@ -138,7 +138,7 @@ def test_configuration_allows_request_voice_override(monkeypatch):
     provider = type(
         "Provider",
         (),
-        {"app_id": "app", "access_token": "token", "voice_type": ""},
+        {"api_key": "key", "speaker": ""},
     )()
     monkeypatch.setattr(
         "app.services.narration_pipeline.SeedAudioProvider.from_config",
@@ -147,5 +147,5 @@ def test_configuration_allows_request_voice_override(monkeypatch):
     pipeline = NarrationPipeline(frame_service=object(), task_runner=lambda *_args: {})
 
     pipeline.validate_configuration(NarrationOptions(voice_id="request-voice"))
-    with pytest.raises(NarrationPipelineError, match="voice_type"):
+    with pytest.raises(NarrationPipelineError, match="speaker"):
         pipeline.validate_configuration(NarrationOptions())

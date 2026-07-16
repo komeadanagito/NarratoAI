@@ -15,6 +15,7 @@ from app.config import config
 from app.services import task
 from app.services.documentary.frame_analysis_service import DocumentaryFrameAnalysisService
 from app.services.short_drama_narration_validation import parse_script_timestamp_range
+from app.services.llm.manager import LLMServiceManager
 from app.services.tts import SeedAudioProvider
 from app.utils import utils
 
@@ -66,19 +67,25 @@ class NarrationPipeline:
         vision_provider = str(config.app.get("vision_llm_provider", "openai")).lower()
         text_provider = str(config.app.get("text_llm_provider", "openai")).lower()
         missing: list[str] = []
-        if not config.app.get(f"vision_{vision_provider}_api_key"):
+        vision_api_key, vision_model, _ = LLMServiceManager.get_provider_config(
+            "vision", vision_provider
+        )
+        text_api_key, text_model, _ = LLMServiceManager.get_provider_config(
+            "text", text_provider
+        )
+        if not vision_api_key:
             missing.append(f"vision_{vision_provider}_api_key")
-        if not config.app.get(f"vision_{vision_provider}_model_name"):
+        if not vision_model:
             missing.append(f"vision_{vision_provider}_model_name")
-        if not config.app.get(f"text_{text_provider}_api_key"):
+        if not text_api_key:
             missing.append(f"text_{text_provider}_api_key")
-        if not config.app.get(f"text_{text_provider}_model_name"):
+        if not text_model:
             missing.append(f"text_{text_provider}_model_name")
         seed_provider = SeedAudioProvider.from_config()
-        if not seed_provider.app_id or not seed_provider.access_token:
-            missing.append("seed_audio.app_id/access_token")
-        if not seed_provider.voice_type and not (options and options.voice_id):
-            missing.append("seed_audio.voice_type 或 narration.voice_id")
+        if not seed_provider.api_key:
+            missing.append("SEED_AUDIO_API_KEY")
+        if not seed_provider.speaker and not (options and options.voice_id):
+            missing.append("seed_audio.speaker 或 narration.voice_id")
         if missing:
             raise NarrationPipelineError(
                 "AI 解说服务未完整配置: " + ", ".join(missing),
