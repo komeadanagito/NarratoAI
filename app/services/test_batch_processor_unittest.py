@@ -37,6 +37,14 @@ class CopyTransform:
         return output_path
 
 
+class ForbiddenNarration:
+    def validate_configuration(self, *_args, **_kwargs):
+        raise AssertionError("disabled narration must not validate AI providers")
+
+    def process(self, *_args, **_kwargs):
+        raise AssertionError("disabled narration must not process the video")
+
+
 def wait_for_batch(store, batch_id, timeout=3):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -63,6 +71,7 @@ def test_batch_processor_runs_and_registers_download(tmp_path):
         batch_store=store,
         artifact_service=artifacts,
         deduplication_service=CopyTransform(),
+        narration_pipeline=ForbiddenNarration(),
         max_workers=1,
         queue_capacity=2,
     )
@@ -77,7 +86,9 @@ def test_batch_processor_runs_and_registers_download(tmp_path):
         assert completed.status == BatchStatus.succeeded
         assert completed.progress == 100
         assert completed.jobs[0].message == "处理成功了"
-        assert artifacts.get_artifact(completed.jobs[0].artifact_id) is not None
+        artifact = artifacts.get_artifact(completed.jobs[0].artifact_id)
+        assert artifact is not None
+        assert Path(artifact.path).read_bytes() == source.read_bytes()
     finally:
         processor.shutdown()
 

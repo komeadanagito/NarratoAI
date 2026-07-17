@@ -146,6 +146,7 @@ class DeduplicationServiceTest(unittest.TestCase):
         self.assertIn("-c", command)
         self.assertEqual(command[command.index("-c") + 1], "copy")
         self.assertNotIn("-filter_complex", command)
+        self.assertIn("0:a:0", command)
         self.assertIn(str(self.input.resolve()), command)
         self.assertEqual(command.count(str(self.input.resolve())), 1)
         self.assertIn("-metadata", command)
