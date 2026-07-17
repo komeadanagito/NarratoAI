@@ -41,9 +41,10 @@ async def download_artifact(
 
     artifact = opened.record
 
-    def chunks():
-        # StreamingResponse runs synchronous iterators in its worker pool. The
-        # same identity-checked descriptor is held until the response ends.
+    async def chunks():
+        # Keep the identity-checked descriptor open for the entire response.
+        # Reading a local file in bounded chunks avoids the synchronous
+        # iterator/thread-pool deadlock seen by ASGI clients during downloads.
         with opened:
             while data := opened.stream.read(1024 * 1024):
                 yield data

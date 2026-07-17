@@ -83,35 +83,44 @@ async def test_real_media_upload_process_poll_and_download(tmp_path: Path) -> No
         base_url="http://test",
     )
     try:
-        upload = await client.post(
-            "/api/v1/uploads/videos",
-            files={"files": (source.name, source.read_bytes(), "video/mp4")},
+        upload = await asyncio.wait_for(
+            client.post(
+                "/api/v1/uploads/videos",
+                files={"files": (source.name, source.read_bytes(), "video/mp4")},
+            ),
+            timeout=5,
         )
         assert upload.status_code == 201, upload.text
         upload_id = upload.json()["uploads"][0]["id"]
 
-        created = await client.post(
-            "/api/v1/batches",
-            json={
-                "upload_ids": [upload_id],
-                "output_directory": str(output_root),
-                "concurrency": 1,
-                "narration": {"enabled": False},
-                "deduplication": {
-                    "change_file_hash": True,
-                    "reencode": True,
-                    "color_noise_tweak": True,
-                    "sticker": True,
-                    "speed_tweak": True,
+        created = await asyncio.wait_for(
+            client.post(
+                "/api/v1/batches",
+                json={
+                    "upload_ids": [upload_id],
+                    "output_directory": str(output_root),
+                    "concurrency": 1,
+                    "narration": {"enabled": False},
+                    "deduplication": {
+                        "change_file_hash": True,
+                        "reencode": True,
+                        "color_noise_tweak": True,
+                        "sticker": True,
+                        "speed_tweak": True,
+                    },
                 },
-            },
+            ),
+            timeout=5,
         )
         assert created.status_code == 202, created.text
         batch_id = created.json()["batch"]["id"]
 
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            polled = await client.get(f"/api/v1/batches/{batch_id}")
+            polled = await asyncio.wait_for(
+                client.get(f"/api/v1/batches/{batch_id}"),
+                timeout=5,
+            )
             assert polled.status_code == 200
             batch = polled.json()["batch"]
             if batch["status"] in {"succeeded", "partially_succeeded", "failed"}:
@@ -123,7 +132,10 @@ async def test_real_media_upload_process_poll_and_download(tmp_path: Path) -> No
         assert batch["status"] == "succeeded", batch
         job = batch["jobs"][0]
         assert Path(job["output_path"]).is_file()
-        downloaded = await client.get(f"/api/v1/artifacts/{job['artifact_id']}/download")
+        downloaded = await asyncio.wait_for(
+            client.get(f"/api/v1/artifacts/{job['artifact_id']}/download"),
+            timeout=5,
+        )
         assert downloaded.status_code == 200
         assert downloaded.content
 
@@ -149,4 +161,4 @@ async def test_real_media_upload_process_poll_and_download(tmp_path: Path) -> No
         assert probe.stdout.strip() == "160,120"
     finally:
         await client.aclose()
-        await lifespan.__aexit__(None, None, None)
+        await asyncio.wait_for(lifespan.__aexit__(None, None, None), timeout=5)
