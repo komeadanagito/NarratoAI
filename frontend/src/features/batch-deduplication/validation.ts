@@ -29,8 +29,8 @@ export function validateSubmission(
   const errors: string[] = []
   if (files.length === 0) errors.push('请至少选择一个视频')
   if (!values.outputDirectory.trim()) errors.push('请填写导出目录')
-  if (!Number.isInteger(values.concurrency)) {
-    errors.push('并发线程数必须是整数')
+  if (!Number.isInteger(values.concurrency) || values.concurrency < 1) {
+    errors.push('并发线程数必须是大于等于 1 的整数')
   }
   return errors
 }

@@ -65,6 +65,7 @@ export function ConfigPanel({ values, dispatch, disabled }: ConfigPanelProps) {
           <span>并发线程数</span>
           <input
             type="number"
+            min="1"
             step="1"
             value={values.concurrency}
             disabled={disabled}

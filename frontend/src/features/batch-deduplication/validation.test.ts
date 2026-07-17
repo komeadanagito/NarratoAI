@@ -30,7 +30,25 @@ describe('submission validation', () => {
     expect(validateSubmission(values, [])).toEqual([
       '请至少选择一个视频',
       '请填写导出目录',
-      '并发线程数必须是整数',
+      '并发线程数必须是大于等于 1 的整数',
     ])
+  })
+
+  it('rejects zero concurrency without imposing an upper limit', () => {
+    const files = [
+      {
+        localId: '1',
+        file: video('demo.mp4'),
+        status: 'selected' as const,
+        progress: 0,
+      },
+    ]
+
+    expect(
+      validateSubmission({ ...defaultFormValues, concurrency: 0 }, files),
+    ).toContain('并发线程数必须是大于等于 1 的整数')
+    expect(
+      validateSubmission({ ...defaultFormValues, concurrency: 100_000 }, files),
+    ).toEqual([])
   })
 })
