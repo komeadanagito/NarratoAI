@@ -283,8 +283,9 @@ components:
           description: 随机微调亮度、对比度、饱和度并添加轻微噪点。
         border_mode:
           type: string
-          enum: [none, blurred, solid]
+          enum: [none, blurred, solid, asset]
           default: none
+          description: asset 从 resource/borders 随机选择透明 PNG 覆盖到原画布，不改变输出宽高比。
         sticker:
           type: boolean
           default: false

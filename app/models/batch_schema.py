@@ -55,6 +55,7 @@ class BorderMode(str, Enum):
     none = "none"
     blurred = "blurred"
     solid = "solid"
+    asset = "asset"
 
 
 class DeduplicationOptions(ApiModel):

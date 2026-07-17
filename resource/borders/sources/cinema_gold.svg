@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff0b0"/>
+      <stop offset="0.42" stop-color="#c79538"/>
+      <stop offset="0.7" stop-color="#ffe29a"/>
+      <stop offset="1" stop-color="#9a6821"/>
+    </linearGradient>
+  </defs>
+  <path d="M0 0H1920V1080H0Z M24 24V1056H1896V24Z" fill="#090806" fill-opacity="0.42" fill-rule="evenodd"/>
+  <rect x="7" y="7" width="1906" height="1066" rx="9" fill="none" stroke="url(#gold)" stroke-width="7"/>
+  <rect x="25" y="25" width="1870" height="1030" rx="3" fill="none" stroke="url(#gold)" stroke-width="2" stroke-opacity="0.88"/>
+  <g fill="url(#gold)">
+    <path d="M40 14h118l18 7-18 7H40Z"/><path d="M1880 14h-118l-18 7 18 7h118Z"/>
+    <path d="M40 1066h118l18-7-18-7H40Z"/><path d="M1880 1066h-118l-18-7 18-7h118Z"/>
+  </g>
+  <g fill="#f7d982" opacity="0.72">
+    <circle cx="22" cy="22" r="4"/><circle cx="1898" cy="22" r="4"/>
+    <circle cx="22" cy="1058" r="4"/><circle cx="1898" cy="1058" r="4"/>
+  </g>
+</svg>

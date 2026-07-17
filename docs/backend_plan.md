@@ -266,6 +266,7 @@ min(请求 concurrency, 批次中的视频任务数)
 | `border_mode=none` | 不增加边框 |
 | `border_mode=solid` | 使用 `pad` 增加轻量纯色边框 |
 | `border_mode=blurred` | 使用背景缩放、模糊和前景叠加形成边框 |
+| `border_mode=asset` | 从 `resource/borders` 随机选择透明 PNG 覆盖四周，不改变画布尺寸或宽高比 |
 | `sticker` | 从 `resource/stickers` 白名单中选择 PNG 并叠加 |
 | `subtitle_mask` | 在原硬字幕区域应用现有柔化遮罩 |
 | `crop_scale` | 在安全范围内随机轻微裁剪或缩放后恢复目标尺寸 |

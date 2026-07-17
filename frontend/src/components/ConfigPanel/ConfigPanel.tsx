@@ -162,6 +162,7 @@ export function ConfigPanel({ values, dispatch, disabled }: ConfigPanelProps) {
               <option value="none">不添加</option>
               <option value="blurred">模糊背景</option>
               <option value="solid">纯色边框</option>
+              <option value="asset">素材边框（随机）</option>
             </select>
           </label>
 

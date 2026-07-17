@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 from app.services.deduplication_service import (
     DeduplicationError,
     DeduplicationService,
@@ -43,6 +45,8 @@ class _FakeRunner:
         input_probe_returncode=0,
         output_probe_returncode=0,
         output_probe_payload=None,
+        width=1920,
+        height=1080,
     ):
         self.has_audio = has_audio
         self.ffmpeg_returncode = ffmpeg_returncode
@@ -51,6 +55,8 @@ class _FakeRunner:
         self.input_probe_returncode = input_probe_returncode
         self.output_probe_returncode = output_probe_returncode
         self.output_probe_payload = output_probe_payload
+        self.width = width
+        self.height = height
         self.calls = []
         self.probe_count = 0
 
@@ -65,13 +71,23 @@ class _FakeRunner:
             if self.probe_count == 1:
                 if self.input_probe_returncode:
                     return _Result(self.input_probe_returncode, stderr="bad source")
-                return _Result(stdout=_probe_payload(has_audio=self.has_audio))
+                return _Result(
+                    stdout=_probe_payload(
+                        has_audio=self.has_audio,
+                        width=self.width,
+                        height=self.height,
+                    )
+                )
             if self.output_probe_returncode:
                 return _Result(self.output_probe_returncode, stderr="bad output")
             return _Result(
                 stdout=self.output_probe_payload
                 if self.output_probe_payload is not None
-                else _probe_payload(has_audio=self.has_audio)
+                else _probe_payload(
+                    has_audio=self.has_audio,
+                    width=self.width,
+                    height=self.height,
+                )
             )
 
         if command[0] == "ffmpeg":
@@ -228,6 +244,74 @@ class DeduplicationServiceTest(unittest.TestCase):
         graph = command[command.index("-filter_complex") + 1]
         self.assertIn("pad=", graph)
         self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+
+    def test_asset_border_and_sticker_use_distinct_overlay_inputs(self):
+        border_root = self.root / "borders"
+        border_root.mkdir()
+        border = border_root / "frame.png"
+        border.write_bytes(b"png")
+        sticker_root = self.root / "stickers"
+        sticker_root.mkdir()
+        sticker = sticker_root / "sticker.png"
+        sticker.write_bytes(b"png")
+        runner = _FakeRunner(width=1080, height=1920)
+
+        _, _, (command, _) = self._apply(
+            runner,
+            {
+                "change_file_hash": False,
+                "reencode": False,
+                "border_mode": "asset",
+                "sticker": True,
+            },
+            service_kwargs={
+                "border_directory": border_root,
+                "sticker_directory": sticker_root,
+            },
+        )
+
+        input_paths = [command[index + 1] for index, item in enumerate(command) if item == "-i"]
+        self.assertEqual(
+            input_paths,
+            [str(self.input.resolve()), str(border.resolve()), str(sticker.resolve())],
+        )
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("[1:v:0]format=rgba,scale=1080:1920:flags=lanczos", graph)
+        self.assertIn("overlay=0:0:eof_action=repeat:shortest=0", graph)
+        self.assertIn("[2:v:0]format=rgba,scale=", graph)
+        self.assertNotIn("pad=", graph)
+        self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+
+    def test_asset_border_requires_an_approved_png(self):
+        border_root = self.root / "borders"
+        border_root.mkdir()
+        (border_root / "ignored.svg").write_text("<svg/>", encoding="utf-8")
+
+        with self.assertRaises(DeduplicationError) as context:
+            self._apply(
+                _FakeRunner(),
+                {"border_mode": "asset"},
+                service_kwargs={"border_directory": border_root},
+            )
+
+        self.assertIn("边框资源目录中没有可用的 PNG 文件", context.exception.message)
+
+    def test_bundled_border_assets_are_transparent_drop_in_frames(self):
+        border_root = Path(__file__).resolve().parents[2] / "resource" / "borders"
+        expected = {"cinema_gold.png", "frost_minimal.png", "neon_dual.png"}
+        assets = {path.name: path for path in border_root.glob("*.png")}
+        self.assertEqual(set(assets), expected)
+
+        for name, asset in assets.items():
+            with self.subTest(asset=name), Image.open(asset) as image:
+                self.assertEqual(image.size, (1920, 1080))
+                self.assertIn("A", image.getbands())
+                alpha = image.getchannel("A")
+                self.assertIsNone(alpha.crop((192, 108, 1728, 972)).getbbox())
+                self.assertIsNotNone(alpha.crop((0, 0, 1920, 64)).getbbox())
+                self.assertIsNotNone(alpha.crop((0, 1016, 1920, 1080)).getbbox())
+                self.assertIsNotNone(alpha.crop((0, 0, 64, 1080)).getbbox())
+                self.assertIsNotNone(alpha.crop((1856, 0, 1920, 1080)).getbbox())
 
     def test_sticker_has_builtin_fallback_when_optional_assets_are_absent(self):
         runner = _FakeRunner()

@@ -1,6 +1,6 @@
 import type { VideoJob } from '../../api/contracts'
 
-export type BorderMode = 'none' | 'blurred' | 'solid'
+export type BorderMode = 'none' | 'blurred' | 'solid' | 'asset'
 
 export interface BatchFormValues {
   outputDirectory: string

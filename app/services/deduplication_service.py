@@ -81,6 +81,7 @@ class DeduplicationService:
         ffmpeg_binary: str = "ffmpeg",
         ffprobe_binary: str = "ffprobe",
         sticker_directory: str | os.PathLike[str] | None = None,
+        border_directory: str | os.PathLike[str] | None = None,
         ffmpeg_threads: int = 2,
         process_timeout: int = 3600,
         probe_timeout: int = 30,
@@ -95,8 +96,10 @@ class DeduplicationService:
         self.probe_timeout = max(1, int(probe_timeout))
         self.random = random_source or secrets.SystemRandom()
         default_stickers = Path(__file__).resolve().parents[2] / "resource" / "stickers"
+        default_borders = Path(__file__).resolve().parents[2] / "resource" / "borders"
         self._sticker_directory_configured = sticker_directory is not None
         self.sticker_directory = Path(sticker_directory or default_stickers)
+        self.border_directory = Path(border_directory or default_borders)
 
     def apply(
         self,
@@ -230,12 +233,22 @@ class DeduplicationService:
         *,
         metadata_id: str,
     ) -> list[str]:
+        border_path = self._select_border() if options.border_mode == "asset" else None
         sticker_path = self._select_sticker() if options.sticker else None
+        next_input_index = 1
+        border_input_index = None
+        sticker_input_index = None
+        if border_path is not None:
+            border_input_index = next_input_index
+            next_input_index += 1
+        if sticker_path is not None:
+            sticker_input_index = next_input_index
         graph, video_label, audio_label, has_video_filter, speed = self._build_filter_graph(
             media,
             options,
             sticker_requested=options.sticker,
-            sticker_input_enabled=sticker_path is not None,
+            border_input_index=border_input_index,
+            sticker_input_index=sticker_input_index,
         )
 
         command = [
@@ -246,6 +259,8 @@ class DeduplicationService:
             "-i",
             str(source),
         ]
+        if border_path is not None:
+            command.extend(["-i", str(border_path)])
         if sticker_path is not None:
             # A still image is enough: overlay repeats the last secondary
             # frame.  ``-loop 1`` would make that input infinite and can keep
@@ -304,7 +319,8 @@ class DeduplicationService:
         options: _Options,
         *,
         sticker_requested: bool,
-        sticker_input_enabled: bool,
+        border_input_index: int | None,
+        sticker_input_index: int | None,
     ) -> tuple[list[str], str, str | None, bool, float | None]:
         graph: list[str] = []
         current = "0:v:0"
@@ -387,6 +403,19 @@ class DeduplicationService:
             )
             graph.append(f"[{blurred}][{scaled}]overlay=(W-w)/2:(H-h)/2[{output}]")
             current = output
+        elif options.border_mode == "asset" and border_input_index is not None:
+            target_width = self._even(media.width)
+            target_height = self._even(media.height)
+            frame = label("frame")
+            output = label("assetborder")
+            graph.append(
+                f"[{border_input_index}:v:0]format=rgba,"
+                f"scale={target_width}:{target_height}:flags=lanczos[{frame}]"
+            )
+            graph.append(
+                f"[{current}][{frame}]overlay=0:0:eof_action=repeat:shortest=0[{output}]"
+            )
+            current = output
 
         if options.subtitle_mask:
             x, y, width, height = self._subtitle_region(media)
@@ -403,7 +432,7 @@ class DeduplicationService:
             graph.append(f"[{base}][{softened}]overlay={x}:{y}[{output}]")
             current = output
 
-        if sticker_input_enabled:
+        if sticker_input_index is not None:
             sticker = label("sticker")
             output = label("stuck")
             sticker_width = self._even(max(24, int(media.width * self.random.uniform(0.06, 0.10))))
@@ -417,7 +446,7 @@ class DeduplicationService:
             ]
             x, y = self.random.choice(positions)
             graph.append(
-                f"[1:v:0]format=rgba,scale={sticker_width}:-2,"
+                f"[{sticker_input_index}:v:0]format=rgba,scale={sticker_width}:-2,"
                 f"colorchannelmixer=aa={opacity:.3f}[{sticker}]"
             )
             graph.append(
@@ -477,14 +506,36 @@ class DeduplicationService:
         return graph, current, audio_label, has_video_filter, speed
 
     def _select_sticker(self) -> Path | None:
+        return self._select_png_asset(
+            self.sticker_directory,
+            resource_name="贴纸",
+            optional=not self._sticker_directory_configured,
+        )
+
+    def _select_border(self) -> Path:
+        selected = self._select_png_asset(
+            self.border_directory,
+            resource_name="边框",
+            optional=False,
+        )
+        assert selected is not None
+        return selected
+
+    def _select_png_asset(
+        self,
+        directory: Path,
+        *,
+        resource_name: str,
+        optional: bool,
+    ) -> Path | None:
         try:
-            root = self.sticker_directory.expanduser().resolve(strict=True)
+            root = directory.expanduser().resolve(strict=True)
         except (OSError, RuntimeError) as exc:
-            if not self._sticker_directory_configured:
+            if optional:
                 return None
-            raise DeduplicationError("贴纸资源目录不存在") from exc
+            raise DeduplicationError(f"{resource_name}资源目录不存在") from exc
         if not root.is_dir():
-            raise DeduplicationError("贴纸资源路径不是目录")
+            raise DeduplicationError(f"{resource_name}资源路径不是目录")
 
         candidates: list[Path] = []
         for candidate in root.iterdir():
@@ -500,9 +551,9 @@ class DeduplicationService:
             candidates.append(resolved)
         candidates.sort(key=lambda item: item.name)
         if not candidates:
-            if not self._sticker_directory_configured:
+            if optional:
                 return None
-            raise DeduplicationError("贴纸资源目录中没有可用的 PNG 文件")
+            raise DeduplicationError(f"{resource_name}资源目录中没有可用的 PNG 文件")
         return self.random.choice(candidates)
 
     def _normalize_options(self, options: DeduplicationOptions | Mapping[str, Any]) -> _Options:
@@ -532,8 +583,11 @@ class DeduplicationService:
             values[name] = value
 
         border_mode = read("border_mode", defaults.border_mode)
-        if border_mode not in {"none", "solid", "blurred"}:
-            raise DeduplicationError("border_mode 必须是 none、solid 或 blurred", code="INVALID_REQUEST")
+        if border_mode not in {"none", "solid", "blurred", "asset"}:
+            raise DeduplicationError(
+                "border_mode 必须是 none、solid、blurred 或 asset",
+                code="INVALID_REQUEST",
+            )
         values["border_mode"] = border_mode
         return _Options(**values)
 

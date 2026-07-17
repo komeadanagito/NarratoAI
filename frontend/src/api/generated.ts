@@ -159,10 +159,11 @@ export interface components {
              */
             color_noise_tweak: boolean;
             /**
+             * @description asset 从 resource/borders 随机选择透明 PNG 覆盖到原画布，不改变输出宽高比。
              * @default none
              * @enum {string}
              */
-            border_mode: "none" | "blurred" | "solid";
+            border_mode: "none" | "blurred" | "solid" | "asset";
             /** @default false */
             sticker: boolean;
             /** @default false */
