@@ -570,12 +570,16 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
 
     # 检查是否有OST=1的原声片段，如果有，则保持原声音量为1.0不变
     has_original_audio_segments = any(segment['OST'] == 1 for segment in list_script)
+    keep_original_audio = bool(getattr(params, 'keep_original_audio', True))
 
     # 应用用户设置和优化建议的组合
     final_tts_volume = params.tts_volume if hasattr(params, 'tts_volume') and params.tts_volume != 1.0 else optimized_volumes['tts_volume']
 
     # 关键修复：如果有原声片段，保持原声音量为1.0，确保与原视频音量一致
-    if has_original_audio_segments:
+    if not keep_original_audio:
+        final_original_volume = 0.0
+        logger.info("当前任务已禁用原声音轨")
+    elif has_original_audio_segments:
         final_original_volume = 1.0  # 保持原声音量不变
         logger.info("检测到原声片段，原声音量设置为1.0以保持与原视频一致")
     else:
@@ -590,7 +594,7 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         'voice_volume': final_tts_volume,
         'bgm_volume': final_bgm_volume,
         'original_audio_volume': final_original_volume,
-        'keep_original_audio': True,
+        'keep_original_audio': keep_original_audio,
         'subtitle_enabled': params.subtitle_enabled and not auto_transcription_enabled,
         'subtitle_font': params.font_name,
         'subtitle_font_size': params.font_size,

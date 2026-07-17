@@ -4,9 +4,13 @@
 #   export SEED_AUDIO_API_KEY="..."
 
 [app]
-    llm_vision_timeout = 120
+    llm_vision_timeout = 1200
     llm_text_timeout = 180
     llm_max_retries = 3
+    llm_video_fps = 1.0
+    llm_video_max_bytes = 52428800
+    llm_video_temperature = 0.2
+    llm_video_max_tokens = 4096
     ffmpeg_path = ""
 
 [ui]
@@ -26,11 +30,6 @@
     subtitle_mask_portrait_opacity_percent = 84
     subtitle_position_landscape_y_percent = 85
     subtitle_position_portrait_y_percent = 82
-
-[frames]
-    frame_interval_input = 3
-    vision_batch_size = 10
-    vision_max_concurrency = 2
 
 [fun_asr]
     auto_transcribe_enabled = false

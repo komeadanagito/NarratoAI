@@ -135,7 +135,7 @@ graph TD
     1. 实现 `apply_direct_deduplication()` 直接去重命令行工具。
     2. 实现 `modify_file_md5()`，在文件末尾以二进制流形式写入随机字节改变 MD5 值。
     3. 扩充 FFmpeg 滤镜逻辑：实现画面微量裁剪缩放、水平翻转镜像、画面 eq（亮度/对比度/噪声）微调、边框（模糊/纯色）、卡贴贴纸覆盖、微变播放速率与音频伴音同步变速。
-  * `app/services/documentary/frame_analysis_service.py`：适配 Volcano Engine 视觉接口 `doubao-seed-2-1-turbo-260628`。
+  * `app/services/documentary/video_narration_service.py`：将完整视频提交给多模态模型，直接生成最终结构化解说脚本，不使用抽帧或文本模型二次改写。
   * `app/services/voice.py`：对接 `seed-audio-1.0` 的大模型合成接口。
 * **开发职责**：
   * 确保不论是通过 AI 解说粗剪合并，还是直接去重，输出文件的 MD5 值都是完全独立的。
@@ -154,4 +154,3 @@ graph TD
 2. **集成顺序**：
    * 成员 B 完成 schema 与 `generate_video.py` 后提交。
    * 成员 A 引入相关参数及方法，并在 `webui.py` 和 `batch_processor.py` 中连调。
-

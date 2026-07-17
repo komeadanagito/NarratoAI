@@ -221,6 +221,7 @@ class VideoClipParams(BaseModel):
 
     tts_volume: Optional[float] = Field(default=AudioVolumeDefaults.TTS_VOLUME, description="解说语音音量（后处理）")
     original_volume: Optional[float] = Field(default=AudioVolumeDefaults.ORIGINAL_VOLUME, description="视频原声音量")
+    keep_original_audio: bool = Field(default=True, description="最终合成时是否保留视频原声音轨")
     bgm_volume: Optional[float] = Field(default=AudioVolumeDefaults.BGM_VOLUME, description="背景音乐音量")
     draft_name: Optional[str] = Field(default="", description="剪映草稿名称")
 

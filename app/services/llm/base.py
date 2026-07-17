@@ -7,8 +7,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
-import PIL.Image
-from loguru import logger
 
 from .exceptions import LLMServiceError, ConfigurationError
 
@@ -102,54 +100,30 @@ class BaseLLMProvider(ABC):
 
 class VisionModelProvider(BaseLLMProvider):
     """视觉模型提供商基类"""
-    
+
     @abstractmethod
-    async def analyze_images(self,
-                           images: List[Union[str, Path, PIL.Image.Image]],
-                           prompt: str,
-                           batch_size: int = 10,
-                           max_concurrency: int = 1,
-                           **kwargs) -> List[str]:
+    async def analyze_video(
+        self,
+        video: Union[str, Path],
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[str] = None,
+        **kwargs,
+    ) -> str:
         """
-        分析图片并返回结果
-        
+        直接分析完整视频并返回结果。
+
         Args:
-            images: 图片路径列表或PIL图片对象列表
-            prompt: 分析提示词
-            batch_size: 批处理大小
-            max_concurrency: 最大并发批次数（实现支持时生效）
+            video: 本地视频路径
+            prompt: 视频分析提示词
+            system_prompt: 可选系统提示词
+            response_format: 响应格式（``json`` 或 ``None``）
             **kwargs: 其他参数
-            
+
         Returns:
-            分析结果列表
+            模型返回的完整文本
         """
         pass
-    
-    def _prepare_images(self, images: List[Union[str, Path, PIL.Image.Image]]) -> List[PIL.Image.Image]:
-        """预处理图片，统一转换为PIL.Image对象"""
-        processed_images = []
-        
-        for img in images:
-            try:
-                if isinstance(img, (str, Path)):
-                    pil_img = PIL.Image.open(img)
-                elif isinstance(img, PIL.Image.Image):
-                    pil_img = img
-                else:
-                    logger.warning(f"不支持的图片类型: {type(img)}")
-                    continue
-                
-                # 调整图片大小以优化性能
-                if pil_img.size[0] > 1024 or pil_img.size[1] > 1024:
-                    pil_img.thumbnail((1024, 1024), PIL.Image.Resampling.LANCZOS)
-                
-                processed_images.append(pil_img)
-                
-            except Exception as e:
-                logger.error(f"加载图片失败 {img}: {str(e)}")
-                continue
-        
-        return processed_images
 
 
 class TextModelProvider(BaseLLMProvider):

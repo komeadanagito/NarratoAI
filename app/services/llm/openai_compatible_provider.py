@@ -4,14 +4,12 @@ OpenAI 兼容提供商实现
 使用 OpenAI 官方 SDK 调用 OpenAI 兼容接口，支持文本和视觉模型。
 """
 
-import asyncio
-import io
 import base64
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-import PIL.Image
 from loguru import logger
 from openai import (
     APIError as OpenAIAPIError,
@@ -24,12 +22,15 @@ from openai import (
 from app.config import config
 from app.config.defaults import DEFAULT_LLM_GENERATION_CONFIG, normalize_openai_compatible_model_name
 from app.utils.openai_base_url_security import (
-    is_trusted_openai_compatible_base_url,
+    is_trusted_openai_compatible_base_url as _is_trusted_openai_compatible_base_url,
     openai_compatible_base_url_warning,
     validate_openai_compatible_base_url as _validate_openai_compatible_base_url_value,
 )
 from .base import TextModelProvider, VisionModelProvider
 from .exceptions import APICallError, AuthenticationError, ConfigurationError, ContentFilterError, RateLimitError
+
+
+is_trusted_openai_compatible_base_url = _is_trusted_openai_compatible_base_url
 
 
 def _normalize_model_name(model_name: str) -> str:
@@ -150,58 +151,61 @@ class _OpenAICompatibleBase:
 class OpenAICompatibleVisionProvider(_OpenAICompatibleBase, VisionModelProvider):
     """OpenAI 兼容视觉模型提供商。"""
 
-    async def analyze_images(
+    async def analyze_video(
         self,
-        images: List[Union[str, Path, PIL.Image.Image]],
+        video: Union[str, Path],
         prompt: str,
-        batch_size: int = 10,
-        max_concurrency: int = 1,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[str] = None,
         **kwargs,
-    ) -> List[str]:
-        logger.info(f"开始使用 OpenAI 兼容接口 ({self.model_name}) 分析 {len(images)} 张图片")
+    ) -> str:
+        video_path = Path(video).expanduser().resolve(strict=True)
+        if not video_path.is_file():
+            raise APICallError("视频输入不是有效文件")
 
-        processed_images = self._prepare_images(images)
-        if not processed_images:
-            return []
-
-        bounded_concurrency = max(1, int(max_concurrency))
-        semaphore = asyncio.Semaphore(bounded_concurrency)
-        batches = [
-            (index // batch_size, processed_images[index : index + batch_size])
-            for index in range(0, len(processed_images), batch_size)
-        ]
-
-        async def run_batch(batch_index: int, batch: List[PIL.Image.Image]) -> tuple[int, str]:
-            logger.info(f"处理第 {batch_index + 1} 批，共 {len(batch)} 张图片")
-            async with semaphore:
-                try:
-                    result = await self._analyze_batch(batch, prompt, **kwargs)
-                    return batch_index, result
-                except Exception as exc:
-                    logger.error(f"批次 {batch_index + 1} 处理失败: {exc}")
-                    return batch_index, f"批次处理失败: {exc}"
-
-        completed = await asyncio.gather(*(run_batch(index, batch) for index, batch in batches))
-        completed.sort(key=lambda item: item[0])
-        return [result for _, result in completed]
-
-    async def _analyze_batch(self, batch: List[PIL.Image.Image], prompt: str, **kwargs) -> str:
-        content = [{"type": "text", "text": prompt}]
-        for img in batch:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{self._image_to_base64(img)}"},
-                }
+        max_video_bytes = int(
+            kwargs.pop(
+                "max_video_bytes",
+                config.app.get("llm_video_max_bytes", 50 * 1024 * 1024),
+            )
+        )
+        video_size = video_path.stat().st_size
+        if video_size > max_video_bytes:
+            raise APICallError(
+                f"视频文件 {video_size} 字节，超过直传模型上限 {max_video_bytes} 字节"
             )
 
-        messages = [{"role": "user", "content": content}]
+        video_fps = float(kwargs.pop("video_fps", config.app.get("llm_video_fps", 1.0)))
+        if not 0.2 <= video_fps <= 5.0:
+            raise ConfigurationError("llm_video_fps 必须在 0.2 到 5.0 之间", "llm_video_fps")
+
+        logger.info(
+            "开始使用 OpenAI 兼容接口 ({}) 直接分析视频: {} ({:.2f} MiB, fps={})",
+            self.model_name,
+            video_path.name,
+            video_size / (1024 * 1024),
+            video_fps,
+        )
+        content = [
+            {
+                "type": "video_url",
+                "video_url": {
+                    "url": self._video_to_data_url(video_path),
+                    "fps": video_fps,
+                },
+            },
+            {"type": "text", "text": prompt},
+        ]
+        messages: list[dict[str, Any]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": content})
         model_name = _normalize_model_name(self.model_name)
 
         client = self._build_client(
             api_key_override=kwargs.get("api_key"),
             base_url_override=kwargs.get("api_base"),
-            timeout_override=config.app.get("llm_vision_timeout", 120),
+            timeout_override=config.app.get("llm_vision_timeout", 1200),
         )
 
         try:
@@ -212,6 +216,8 @@ class OpenAICompatibleVisionProvider(_OpenAICompatibleBase, VisionModelProvider)
                 max_tokens=generation_overrides.pop("max_tokens", None),
                 **generation_overrides,
             )
+            if response_format == "json":
+                completion_options["response_format"] = {"type": "json_object"}
             response = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
@@ -238,10 +244,13 @@ class OpenAICompatibleVisionProvider(_OpenAICompatibleBase, VisionModelProvider)
             logger.error(f"OpenAI 兼容接口调用失败: {exc}")
             raise APICallError(f"调用失败: {exc}")
 
-    def _image_to_base64(self, img: PIL.Image.Image) -> str:
-        img_buffer = io.BytesIO()
-        img.save(img_buffer, format="JPEG", quality=85)
-        return base64.b64encode(img_buffer.getvalue()).decode("utf-8")
+    @staticmethod
+    def _video_to_data_url(video_path: Path) -> str:
+        mime_type = mimetypes.guess_type(video_path.name)[0] or "video/mp4"
+        if not mime_type.startswith("video/"):
+            mime_type = "video/mp4"
+        encoded = base64.b64encode(video_path.read_bytes()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
 
     async def _make_api_call(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return payload

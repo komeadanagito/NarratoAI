@@ -9,11 +9,13 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from loguru import logger
+
 from app.models.batch_schema import NarrationOptions
 from app.models.schema import VideoClipParams
 from app.config import config
 from app.services import task
-from app.services.documentary.frame_analysis_service import DocumentaryFrameAnalysisService
+from app.services.documentary.video_narration_service import VideoNarrationService
 from app.services.short_drama_narration_validation import parse_script_timestamp_range
 from app.services.llm.manager import LLMServiceManager
 from app.services.tts import SeedAudioProvider
@@ -53,11 +55,11 @@ class NarrationPipeline:
     def __init__(
         self,
         *,
-        frame_service: DocumentaryFrameAnalysisService | Any | None = None,
+        video_service: VideoNarrationService | Any | None = None,
         task_runner: Callable[[str, VideoClipParams], Any] | None = None,
         task_dir_factory: Callable[[str], str] | None = None,
     ) -> None:
-        self._frame_service = frame_service or DocumentaryFrameAnalysisService()
+        self._video_service = video_service or VideoNarrationService()
         self._task_runner = task_runner or task.start_subclip_unified
         self._task_dir_factory = task_dir_factory or utils.task_dir
 
@@ -65,27 +67,17 @@ class NarrationPipeline:
         """Fail before enqueueing when an AI provider is not configured."""
 
         vision_provider = str(config.app.get("vision_llm_provider", "openai")).lower()
-        text_provider = str(config.app.get("text_llm_provider", "openai")).lower()
         missing: list[str] = []
         vision_api_key, vision_model, _ = LLMServiceManager.get_provider_config(
             "vision", vision_provider
-        )
-        text_api_key, text_model, _ = LLMServiceManager.get_provider_config(
-            "text", text_provider
         )
         if not vision_api_key:
             missing.append(f"vision_{vision_provider}_api_key")
         if not vision_model:
             missing.append(f"vision_{vision_provider}_model_name")
-        if not text_api_key:
-            missing.append(f"text_{text_provider}_api_key")
-        if not text_model:
-            missing.append(f"text_{text_provider}_model_name")
         seed_provider = SeedAudioProvider.from_config()
         if not seed_provider.api_key:
             missing.append("SEED_AUDIO_API_KEY")
-        if not seed_provider.speaker and not (options and options.voice_id):
-            missing.append("seed_audio.speaker 或 narration.voice_id")
         if missing:
             raise NarrationPipelineError(
                 "AI 解说服务未完整配置: " + ", ".join(missing),
@@ -109,14 +101,15 @@ class NarrationPipeline:
                 raise NarrationPipelineError("AI 解说输入不是有效的视频文件")
 
             progress = progress_callback or (lambda _value, _message: None)
-            progress(1, "正在分析视频画面")
+            progress(1, "正在调用视频模型生成解说文案")
 
             def analysis_progress(value: float, message: str) -> None:
                 # Reserve the final 20% for TTS, clipping, subtitles, and merging.
                 progress(max(1.0, min(78.0, float(value) * 0.78)), message)
 
-            script_result = self._frame_service.generate_documentary_script(
+            script_result = self._video_service.generate_narration_script(
                 video_path=str(source),
+                language=options.language,
                 progress_callback=analysis_progress,
             )
             script = self._await_if_needed(script_result)
@@ -139,6 +132,8 @@ class NarrationPipeline:
                 tts_engine="seed_audio",
                 bgm_type="",
                 bgm_name="",
+                original_volume=0.0,
+                keep_original_audio=False,
                 subtitle_enabled=True,
             )
             result = self._task_runner(str(task_id), params)
@@ -148,6 +143,13 @@ class NarrationPipeline:
         except NarrationPipelineError:
             raise
         except Exception as exc:
+            logger.exception(
+                "AI 解说处理失败: task_id={}, source={}, error_type={}, error={}",
+                task_id,
+                source_path,
+                type(exc).__name__,
+                exc,
+            )
             code = str(getattr(exc, "code", "PROCESSING_FAILED"))
             status_code = int(getattr(exc, "status_code", 500))
             if code not in {
@@ -207,8 +209,8 @@ class NarrationPipeline:
                 raise NarrationPipelineError("解说片段必须按时间顺序排列且不能重叠")
             if timestamp in seen_timestamps:
                 raise NarrationPipelineError("解说片段包含重复时间戳")
-            if len(narration.encode("utf-8")) > 1024:
-                raise NarrationPipelineError("单个解说片段超过 Seed Audio 1024 字节限制")
+            if len(narration) > 3000:
+                raise NarrationPipelineError("单个解说片段超过 Seed Audio 3000 字符限制")
             previous_end_ms = end_ms
             seen_timestamps.add(timestamp)
             normalized.append(
@@ -219,7 +221,9 @@ class NarrationPipeline:
                     "timestamp": timestamp,
                     "picture": str(raw_item.get("picture") or "").strip(),
                     "narration": narration,
-                    "OST": 2,
+                    # AI narration output must not retain the source soundtrack.
+                    # OST=0 means narration only; OST=2 mixes narration + source.
+                    "OST": 0,
                 }
             )
         return normalized

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -91,7 +91,9 @@ class SeedAudioProvider:
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.speaker)
+        # Pure-text generation only requires the API key. Speaker/references
+        # select a voice or reference mode and are optional.
+        return bool(self.api_key)
 
     def synthesize(
         self,
@@ -113,11 +115,6 @@ class SeedAudioProvider:
             raise error
 
         references = self._build_references(voice_id)
-        if not references:
-            error = SeedAudioError("Seed Audio 未配置 speaker")
-            error.code = "PROVIDER_NOT_CONFIGURED"
-            error.status_code = 400
-            raise error
 
         prompt_parts = []
         if str(language or "").strip():
@@ -125,17 +122,25 @@ class SeedAudioProvider:
         if str(voice_prompt or "").strip():
             prompt_parts.append(str(voice_prompt).strip())
         prompt_parts.append(clean_text)
+        text_prompt = "\n".join(prompt_parts)
+        if len(text_prompt) > 3000:
+            raise SeedAudioError("Seed Audio text_prompt 超过 3000 字符限制")
 
         audio_config = dict(self.audio_config)
         audio_config["speech_rate"] = self._speed_to_rate(speed)
         payload = {
             "model": self.model,
-            "text_prompt": "\n".join(prompt_parts),
-            "references": references,
+            "text_prompt": text_prompt,
             "audio_config": audio_config,
             "watermark": dict(self.watermark),
         }
-        headers = {"Content-Type": "application/json", "X-Api-Key": self.api_key}
+        if references:
+            payload["references"] = references
+        headers = {
+            "Content-Type": "application/json",
+            "X-Api-Key": self.api_key,
+            "X-Api-Request-Id": str(uuid.uuid4()),
+        }
 
         last_error: SeedAudioError | None = None
         for attempt in range(self.max_retries):
@@ -202,6 +207,17 @@ class SeedAudioProvider:
             raise SeedAudioError("Seed Audio 返回了无效 JSON") from exc
         if not isinstance(payload, dict):
             raise SeedAudioError("Seed Audio 返回格式错误")
+        response_code = payload.get("code")
+        if response_code not in (None, 0, "0"):
+            message = str(payload.get("message") or "未知错误")[:300]
+            try:
+                provider_code = int(response_code)
+            except (TypeError, ValueError):
+                provider_code = None
+            raise SeedAudioError(
+                f"Seed Audio 上游返回错误: {message}",
+                provider_code=provider_code,
+            )
 
         encoded = self._find_value(payload, ("audio_data", "audio_base64", "audio"))
         if isinstance(encoded, str):

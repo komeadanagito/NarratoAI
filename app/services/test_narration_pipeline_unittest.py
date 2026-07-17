@@ -7,8 +7,8 @@ from app.models.batch_schema import NarrationOptions
 from app.services.narration_pipeline import NarrationPipeline, NarrationPipelineError
 
 
-class FakeFrameService:
-    async def generate_documentary_script(self, **kwargs):
+class FakeVideoService:
+    async def generate_narration_script(self, **kwargs):
         kwargs["progress_callback"](50, "half")
         return [
             {
@@ -34,7 +34,7 @@ def test_narration_pipeline_builds_seed_audio_params(tmp_path):
 
     progress = []
     pipeline = NarrationPipeline(
-        frame_service=FakeFrameService(),
+        video_service=FakeVideoService(),
         task_runner=runner,
         task_dir_factory=lambda task_id: str(tmp_path / task_id),
     )
@@ -57,7 +57,9 @@ def test_narration_pipeline_builds_seed_audio_params(tmp_path):
     assert params.voice_name == "voice-a"
     assert params.voice_prompt == "克制"
     script = json.loads(Path(params.video_clip_json_path).read_text(encoding="utf-8"))
-    assert script[0]["OST"] == 2
+    assert script[0]["OST"] == 0
+    assert params.keep_original_audio is False
+    assert params.original_volume == 0.0
     assert progress[-1][0] == 100
 
 
@@ -65,12 +67,12 @@ def test_narration_pipeline_rejects_empty_script(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
 
-    class EmptyFrameService:
-        async def generate_documentary_script(self, **_kwargs):
+    class EmptyVideoService:
+        async def generate_narration_script(self, **_kwargs):
             return []
 
     pipeline = NarrationPipeline(
-        frame_service=EmptyFrameService(),
+        video_service=EmptyVideoService(),
         task_runner=lambda *_args: {},
         task_dir_factory=lambda task_id: str(tmp_path / task_id),
     )
@@ -90,12 +92,12 @@ def test_narration_pipeline_rejects_unsafe_timestamps(tmp_path, timestamp):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
 
-    class InvalidFrameService:
-        async def generate_documentary_script(self, **_kwargs):
+    class InvalidVideoService:
+        async def generate_narration_script(self, **_kwargs):
             return [{"timestamp": timestamp, "narration": "text"}]
 
     pipeline = NarrationPipeline(
-        frame_service=InvalidFrameService(),
+        video_service=InvalidVideoService(),
         task_runner=lambda *_args: {},
         task_dir_factory=lambda task_id: str(tmp_path / task_id),
     )
@@ -107,15 +109,15 @@ def test_narration_pipeline_rejects_overlapping_segments(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
 
-    class OverlapFrameService:
-        async def generate_documentary_script(self, **_kwargs):
+    class OverlapVideoService:
+        async def generate_narration_script(self, **_kwargs):
             return [
                 {"timestamp": "00:00:00,000-00:00:02,000", "narration": "one"},
                 {"timestamp": "00:00:01,000-00:00:03,000", "narration": "two"},
             ]
 
     pipeline = NarrationPipeline(
-        frame_service=OverlapFrameService(),
+        video_service=OverlapVideoService(),
         task_runner=lambda *_args: {},
         task_dir_factory=lambda task_id: str(tmp_path / task_id),
     )
@@ -123,16 +125,13 @@ def test_narration_pipeline_rejects_overlapping_segments(tmp_path):
         pipeline.process(source, task_id="job-4", options=NarrationOptions(enabled=True))
 
 
-def test_configuration_allows_request_voice_override(monkeypatch):
+def test_configuration_allows_pure_text_tts_without_speaker(monkeypatch):
     monkeypatch.setattr(
         "app.services.narration_pipeline.config.app",
         {
             "vision_llm_provider": "openai",
             "vision_openai_api_key": "test",
             "vision_openai_model_name": "vision",
-            "text_llm_provider": "openai",
-            "text_openai_api_key": "test",
-            "text_openai_model_name": "text",
         },
     )
     provider = type(
@@ -144,8 +143,7 @@ def test_configuration_allows_request_voice_override(monkeypatch):
         "app.services.narration_pipeline.SeedAudioProvider.from_config",
         lambda: provider,
     )
-    pipeline = NarrationPipeline(frame_service=object(), task_runner=lambda *_args: {})
+    pipeline = NarrationPipeline(video_service=object(), task_runner=lambda *_args: {})
 
     pipeline.validate_configuration(NarrationOptions(voice_id="request-voice"))
-    with pytest.raises(NarrationPipelineError, match="speaker"):
-        pipeline.validate_configuration(NarrationOptions())
+    pipeline.validate_configuration(NarrationOptions())

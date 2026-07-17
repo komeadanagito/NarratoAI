@@ -63,6 +63,27 @@ class SeedAudioProviderTests(unittest.TestCase):
         self.assertEqual(20, call["json"]["audio_config"]["speech_rate"])
         self.assertIn("沉稳", call["json"]["text_prompt"])
         self.assertIn("你好", call["json"]["text_prompt"])
+        self.assertTrue(call["headers"]["X-Api-Request-Id"])
+
+    def test_pure_text_request_does_not_require_speaker_or_references(self):
+        audio = b"pure-text-mp3"
+        session = _Session([_Response({"code": 0, "audio": base64.b64encode(audio).decode()})])
+        provider = SeedAudioProvider(
+            api_key="secret",
+            speaker="",
+            references=[],
+            session=session,
+            max_retries=1,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "voice.mp3"
+            provider.synthesize("生成一段自然的中文旁白", output)
+
+        payload = session.calls[0][2]["json"]
+        self.assertNotIn("references", payload)
+        self.assertEqual("生成一段自然的中文旁白", payload["text_prompt"])
+        self.assertTrue(provider.configured)
 
     def test_request_voice_overrides_configured_speaker(self):
         session = _Session([_Response({"audio_base64": base64.b64encode(b"mp3").decode()})])
@@ -111,6 +132,23 @@ class SeedAudioProviderTests(unittest.TestCase):
             with self.assertRaises(SeedAudioError) as caught:
                 provider.synthesize("hello", Path(temp_dir) / "voice.mp3")
         self.assertNotIn("secret", str(caught.exception))
+
+    def test_rejects_text_prompt_over_3000_characters(self):
+        provider = SeedAudioProvider(api_key="secret", speaker="")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(SeedAudioError, "3000"):
+                provider.synthesize("字" * 3001, Path(temp_dir) / "voice.mp3")
+
+    def test_surfaces_success_http_with_provider_error_code(self):
+        provider = SeedAudioProvider(
+            api_key="secret",
+            session=_Session([_Response({"code": 45000010, "message": "Invalid X-Api-Key"})]),
+            max_retries=1,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(SeedAudioError, "Invalid X-Api-Key") as caught:
+                provider.synthesize("hello", Path(temp_dir) / "voice.mp3")
+        self.assertEqual(45000010, caught.exception.provider_code)
 
 
 if __name__ == "__main__":

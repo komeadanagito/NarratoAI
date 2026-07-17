@@ -82,7 +82,17 @@ def apply_model_config(config_data: dict[str, Any], project_root: str | Path) ->
     tts_profile = _profile(tts_profiles, active.get("tts"), "tts")
     if str(tts_profile.get("provider") or "").strip() != "seed_audio":
         raise ModelConfigError("当前批量解说仅支持 seed_audio TTS provider")
-    result["seed_audio"] = deepcopy(tts_profile)
+    local_seed_audio = result.get("seed_audio") or {}
+    resolved_seed_audio = deepcopy(tts_profile)
+    # Keep machine-local credentials in ignored config.toml. A checked-in
+    # model profile may override them only with a non-empty value.
+    if (
+        isinstance(local_seed_audio, dict)
+        and not str(resolved_seed_audio.get("api_key") or "").strip()
+        and str(local_seed_audio.get("api_key") or "").strip()
+    ):
+        resolved_seed_audio["api_key"] = str(local_seed_audio["api_key"]).strip()
+    result["seed_audio"] = resolved_seed_audio
     return result
 
 

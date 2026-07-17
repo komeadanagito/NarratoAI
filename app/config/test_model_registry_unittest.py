@@ -47,6 +47,38 @@ def test_active_openai_profile_is_flattened_for_existing_llm_services(tmp_path):
     assert result["seed_audio"]["api_url"].endswith("/api/v3/tts/create")
 
 
+def test_empty_tts_profile_key_preserves_machine_local_key(tmp_path):
+    _write_registry(
+        tmp_path,
+        {
+            "active": {"vision": "ark", "text": "ark", "tts": "seed"},
+            "llm_profiles": {
+                "ark": {
+                    "provider": "openai",
+                    "base_url": "https://ark.example/api/v3",
+                    "models": {"vision": "vision-model", "text": "text-model"},
+                }
+            },
+            "tts_profiles": {
+                "seed": {
+                    "provider": "seed_audio",
+                    "api_key_env": "SEED_KEY",
+                    "api_key": "",
+                    "api_url": "https://speech.example/api/v3/tts/create",
+                    "model": "seed-audio-1.0",
+                }
+            },
+        },
+    )
+
+    result = apply_model_config(
+        {"app": {}, "seed_audio": {"api_key": "machine-local-key"}},
+        tmp_path,
+    )
+
+    assert result["seed_audio"]["api_key"] == "machine-local-key"
+
+
 def test_unknown_active_profile_fails_fast(tmp_path):
     _write_registry(
         tmp_path,

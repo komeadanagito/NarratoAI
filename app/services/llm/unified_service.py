@@ -6,11 +6,9 @@
 
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
-import PIL.Image
 from loguru import logger
 
 from .manager import LLMServiceManager
-from .validators import OutputValidator
 from .exceptions import LLMServiceError
 
 # 提供商由 LLMServiceManager 在首次使用时延迟注册。
@@ -21,23 +19,27 @@ class UnifiedLLMService:
     """统一的大模型服务接口"""
     
     @staticmethod
-    async def analyze_images(images: List[Union[str, Path, PIL.Image.Image]],
-                           prompt: str,
-                           provider: Optional[str] = None,
-                           batch_size: int = 10,
-                           **kwargs) -> List[str]:
+    async def analyze_video(
+        video: Union[str, Path],
+        prompt: str,
+        provider: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        response_format: Optional[str] = None,
+        **kwargs,
+    ) -> str:
         """
-        分析图片内容
+        直接分析完整视频内容。
         
         Args:
-            images: 图片路径列表或PIL图片对象列表
+            video: 本地视频路径
             prompt: 分析提示词
             provider: 视觉模型提供商名称，如果不指定则使用配置中的默认值
-            batch_size: 批处理大小
+            system_prompt: 可选系统提示词
+            response_format: 响应格式
             **kwargs: 其他参数
             
         Returns:
-            分析结果列表
+            模型返回文本
             
         Raises:
             LLMServiceError: 服务调用失败时抛出
@@ -46,20 +48,20 @@ class UnifiedLLMService:
             # 获取视觉模型提供商
             vision_provider = LLMServiceManager.get_vision_provider(provider)
             
-            # 执行图片分析
-            results = await vision_provider.analyze_images(
-                images=images,
+            result = await vision_provider.analyze_video(
+                video=video,
                 prompt=prompt,
-                batch_size=batch_size,
-                **kwargs
+                system_prompt=system_prompt,
+                response_format=response_format,
+                **kwargs,
             )
-            
-            logger.info(f"图片分析完成，共处理 {len(images)} 张图片，生成 {len(results)} 个结果")
-            return results
+
+            logger.info("视频分析完成")
+            return result
             
         except Exception as e:
-            logger.error(f"图片分析失败: {str(e)}")
-            raise LLMServiceError(f"图片分析失败: {str(e)}")
+            logger.error(f"视频分析失败: {str(e)}")
+            raise LLMServiceError(f"视频分析失败: {str(e)}")
     
     @staticmethod
     async def generate_text(prompt: str,
@@ -140,56 +142,6 @@ class UnifiedLLMService:
             raise LLMServiceError(f"流式文本生成失败: {str(e)}")
     
     @staticmethod
-    async def generate_narration_script(prompt: str,
-                                      provider: Optional[str] = None,
-                                      temperature: float = 1.0,
-                                      validate_output: bool = True,
-                                      **kwargs) -> List[Dict[str, Any]]:
-        """
-        生成解说文案
-        
-        Args:
-            prompt: 提示词
-            provider: 文本模型提供商名称
-            temperature: 生成温度
-            validate_output: 是否验证输出格式
-            **kwargs: 其他参数
-            
-        Returns:
-            解说文案列表
-            
-        Raises:
-            LLMServiceError: 服务调用失败时抛出
-        """
-        try:
-            # 生成文本
-            result = await UnifiedLLMService.generate_text(
-                prompt=prompt,
-                provider=provider,
-                temperature=temperature,
-                response_format="json",
-                **kwargs
-            )
-            
-            # 验证输出格式
-            if validate_output:
-                narration_items = OutputValidator.validate_narration_script(result)
-                logger.info(f"解说文案生成并验证完成，共 {len(narration_items)} 个片段")
-                return narration_items
-            else:
-                # 简单的JSON解析
-                import json
-                parsed_result = json.loads(result)
-                if "items" in parsed_result:
-                    return parsed_result["items"]
-                else:
-                    return parsed_result
-                    
-        except Exception as e:
-            logger.error(f"解说文案生成失败: {str(e)}")
-            raise LLMServiceError(f"解说文案生成失败: {str(e)}")
-    
-    @staticmethod
     def get_provider_info() -> Dict[str, Any]:
         """
         获取所有提供商信息
@@ -226,13 +178,19 @@ class UnifiedLLMService:
         logger.info("已清空大模型服务缓存")
 
 
-# 为了向后兼容，提供一些便捷函数
-async def analyze_images_unified(images: List[Union[str, Path, PIL.Image.Image]],
-                               prompt: str,
-                               provider: Optional[str] = None,
-                               batch_size: int = 10) -> List[str]:
-    """便捷的图片分析函数"""
-    return await UnifiedLLMService.analyze_images(images, prompt, provider, batch_size)
+async def analyze_video_unified(
+    video: Union[str, Path],
+    prompt: str,
+    provider: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """便捷的视频分析函数。"""
+    return await UnifiedLLMService.analyze_video(
+        video=video,
+        prompt=prompt,
+        provider=provider,
+        **kwargs,
+    )
 
 
 async def generate_text_unified(prompt: str,
